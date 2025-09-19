@@ -1,0 +1,12 @@
+gcp:
+    project_id: zyoshu-test
+    region: us-central1
+    zone: ""
+k8s:
+    cluster_name: laravel-cluster-stg
+    config_path: /Users/karthickk/.kube/config
+    namespace: laravel-app
+log_level: info
+ssh:
+    port: 22
+    username: root
