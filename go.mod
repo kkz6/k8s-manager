@@ -1,6 +1,6 @@
 module github.com/FalcoSuessgott/golang-cli-template
 
-go 1.19
+go 1.21
 
 require (
 	github.com/daixiang0/gci v0.13.4
@@ -10,7 +10,7 @@ require (
 	github.com/muesli/mango-cobra v1.2.0
 	github.com/muesli/roff v0.1.0
 	github.com/spf13/cobra v1.8.0
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.11.1
 	golang.org/x/lint v0.0.0-20210508222113-6edffad5e616
 	golang.org/x/tools v0.22.0
 	mvdan.cc/gofumpt v0.6.0
