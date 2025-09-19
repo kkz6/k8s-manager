@@ -7,6 +7,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/karthickk/k8s-manager/pkg/k8s"
+	"github.com/karthickk/k8s-manager/pkg/ui"
 	"github.com/karthickk/k8s-manager/pkg/utils"
 	"github.com/spf13/cobra"
 	corev1 "k8s.io/api/core/v1"
@@ -110,6 +111,15 @@ func newPodsSSHCmd() *cobra.Command {
 }
 
 func runPodsList(cmd *cobra.Command, args []string) error {
+	// Check if we're in interactive mode
+	if interactiveMode {
+		namespace, _ := cmd.Flags().GetString("namespace")
+		allNamespaces, _ := cmd.Flags().GetBool("all-namespaces")
+
+		// Use the enhanced UI for interactive mode
+		return ui.ShowEnhancedPodsInterface(namespace, allNamespaces)
+	}
+
 	client, err := k8s.NewClient()
 	if err != nil {
 		return fmt.Errorf("failed to create Kubernetes client: %w", err)
