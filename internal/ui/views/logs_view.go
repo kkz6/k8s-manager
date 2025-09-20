@@ -31,6 +31,8 @@ type LogsViewModel struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	errorMsg    string
+	logStream   io.ReadCloser
+	logReader   *bufio.Reader
 }
 
 // NewLogsViewModel creates a new logs view
@@ -59,7 +61,10 @@ type logsErrorMsg struct {
 
 // Init starts fetching logs
 func (m *LogsViewModel) Init() tea.Cmd {
-	return m.fetchLogs()
+	return tea.Batch(
+		m.initLogStream(),
+		tea.WindowSize(),
+	)
 }
 
 // Update handles messages
@@ -87,6 +92,9 @@ func (m *LogsViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q", "esc", "ctrl+c":
 			m.quitting = true
 			m.cancel() // Cancel log streaming
+			if m.logStream != nil {
+				m.logStream.Close()
+			}
 			return m, tea.Quit
 		case "g", "home":
 			m.viewport.GotoTop()
@@ -115,7 +123,7 @@ func (m *LogsViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Continue fetching if following
 		if m.follow {
-			return m, m.fetchLogs()
+			return m, m.readMoreLogs()
 		}
 
 	case logsErrorMsg:
@@ -208,8 +216,8 @@ func (m *LogsViewModel) updateViewport() {
 	m.viewport.SetContent(content)
 }
 
-// fetchLogs fetches logs from the pod
-func (m *LogsViewModel) fetchLogs() tea.Cmd {
+// initLogStream initializes the log stream
+func (m *LogsViewModel) initLogStream() tea.Cmd {
 	return func() tea.Msg {
 		client, err := services.GetK8sClient()
 		if err != nil {
@@ -237,49 +245,83 @@ func (m *LogsViewModel) fetchLogs() tea.Cmd {
 		if err != nil {
 			return logsErrorMsg{err: err}
 		}
-		defer stream.Close()
 
-		// Read logs
-		reader := bufio.NewReader(stream)
+		// Store stream and reader for later use
+		m.logStream = stream
+		m.logReader = bufio.NewReader(stream)
+
+		// Start reading logs
+		if m.follow {
+			return m.readMoreLogs()()
+		} else {
+			return m.readAllLogs()()
+		}
+	}
+}
+
+// readAllLogs reads all logs for non-follow mode
+func (m *LogsViewModel) readAllLogs() tea.Cmd {
+	return func() tea.Msg {
+		if m.logReader == nil {
+			return logsErrorMsg{err: fmt.Errorf("log reader not initialized")}
+		}
+
 		var allLines []string
-		
-		// For non-follow mode, read all lines at once
-		if !m.follow {
-			for {
-				line, err := reader.ReadString('\n')
-				if err != nil {
-					if err == io.EOF {
-						break
-					}
-					return logsErrorMsg{err: err}
+		for {
+			line, err := m.logReader.ReadString('\n')
+			if err != nil {
+				if err == io.EOF {
+					break
 				}
-				// Remove newline
-				line = strings.TrimSuffix(line, "\n")
-				allLines = append(allLines, line)
+				return logsErrorMsg{err: err}
 			}
-			return logsUpdateMsg{lines: allLines}
+			// Remove newline
+			line = strings.TrimSuffix(line, "\n")
+			allLines = append(allLines, line)
 		}
 		
-		// For follow mode, read in batches
+		// Close the stream for non-follow mode
+		if m.logStream != nil {
+			m.logStream.Close()
+		}
+		
+		return logsUpdateMsg{lines: allLines}
+	}
+}
+
+// readMoreLogs reads more logs for follow mode
+func (m *LogsViewModel) readMoreLogs() tea.Cmd {
+	return func() tea.Msg {
+		if m.logReader == nil {
+			return logsErrorMsg{err: fmt.Errorf("log reader not initialized")}
+		}
+
 		var newLines []string
 		for {
 			select {
 			case <-m.ctx.Done():
 				return nil
 			default:
-				line, err := reader.ReadString('\n')
+				// Set a read deadline to avoid blocking forever
+				line, err := m.logReader.ReadString('\n')
 				if err != nil {
 					if err == io.EOF {
-						// For follow mode, wait and continue
+						// If we have some lines, send them
+						if len(newLines) > 0 {
+							return logsUpdateMsg{lines: newLines}
+						}
+						// Otherwise, wait a bit and try again
 						time.Sleep(100 * time.Millisecond)
-						continue
+						return m.readMoreLogs()()
 					}
 					return logsErrorMsg{err: err}
 				}
 				
 				// Remove newline
 				line = strings.TrimSuffix(line, "\n")
-				newLines = append(newLines, line)
+				if line != "" {
+					newLines = append(newLines, line)
+				}
 				
 				// Send batch updates for better performance
 				if len(newLines) >= 10 {
