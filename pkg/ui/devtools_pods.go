@@ -23,6 +23,8 @@ type DevToolsPodsModel struct {
 	filterInput   textinput.Model
 	filtering     bool
 	loading       bool
+	loadingAction bool // Track if we're loading an action
+	spinner       AnimatedSpinner // Animated spinner
 	width         int
 	height        int
 	client        *k8s.Client
@@ -42,6 +44,7 @@ func NewDevToolsPodsModel(namespace string, allNamespaces bool) *DevToolsPodsMod
 	return &DevToolsPodsModel{
 		filterInput:   ti,
 		loading:       true,
+		spinner:       NewAnimatedSpinner("spinner", "Loading pods"),
 		namespace:     namespace,
 		allNamespaces: allNamespaces,
 		selected:      -1,
@@ -49,7 +52,10 @@ func NewDevToolsPodsModel(namespace string, allNamespaces bool) *DevToolsPodsMod
 }
 
 func (m *DevToolsPodsModel) Init() tea.Cmd {
-	return m.loadPods
+	return tea.Batch(
+		m.loadPods,
+		m.spinner.Init(),
+	)
 }
 
 func (m *DevToolsPodsModel) loadPods() tea.Msg {
@@ -96,6 +102,17 @@ func (m *DevToolsPodsModel) loadPods() tea.Msg {
 }
 
 func (m *DevToolsPodsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
+	// Update spinner animation
+	if m.loading || m.loadingAction {
+		spinner, cmd := m.spinner.Update(msg)
+		m.spinner = spinner
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -146,7 +163,14 @@ func (m *DevToolsPodsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if num <= len(m.filteredPods) {
 				m.selected = num - 1
 				m.podSelected = true
-				return m, tea.Quit
+				m.loadingAction = true
+				m.spinner = NewAnimatedSpinner("spinner", fmt.Sprintf("Loading actions for pod %s", m.filteredPods[m.selected].Name))
+				return m, tea.Batch(
+					m.spinner.Init(),
+					tea.Tick(time.Millisecond*300, func(t time.Time) tea.Msg {
+						return tea.Quit()
+					}),
+				)
 			}
 		}
 
@@ -154,8 +178,11 @@ func (m *DevToolsPodsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch keyStr {
 		case "9": // Refresh
 			m.loading = true
-			m.message = "Refreshing..."
-			return m, m.loadPods
+			m.spinner = NewAnimatedSpinner("spinner", "Refreshing pods")
+			return m, tea.Batch(
+				m.loadPods,
+				m.spinner.Init(),
+			)
 
 		case "0", "b": // Back to main menu
 			return m, tea.Quit
@@ -188,12 +215,23 @@ func (m *DevToolsPodsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter", " ":
 			if m.selected >= 0 && m.selected < len(m.filteredPods) {
 				m.podSelected = true
-				return m, tea.Quit
+				m.loadingAction = true
+				m.spinner = NewAnimatedSpinner("spinner", fmt.Sprintf("Loading actions for pod %s", m.filteredPods[m.selected].Name))
+				return m, tea.Batch(
+					m.spinner.Init(),
+					tea.Tick(time.Millisecond*300, func(t time.Time) tea.Msg {
+						return tea.Quit()
+					}),
+				)
 			}
 
 		case "r":
 			m.loading = true
-			return m, m.loadPods
+			m.spinner = NewAnimatedSpinner("spinner", "Refreshing pods")
+			return m, tea.Batch(
+				m.loadPods,
+				m.spinner.Init(),
+			)
 
 		case "d":
 			if m.selected >= 0 && m.selected < len(m.filteredPods) {
@@ -207,17 +245,21 @@ func (m *DevToolsPodsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if len(cmds) > 0 {
+		return m, tea.Batch(cmds...)
+	}
 	return m, nil
 }
 
 func (m *DevToolsPodsModel) View() string {
-	if m.err != nil {
-		return devToolsContainerStyle.Render(
-			devToolsErrorStyle.Render("Error: " + m.err.Error()),
-		)
-	}
-
 	var s strings.Builder
+
+	if m.err != nil {
+		s.WriteString(devToolsContainerStyle.Render(
+			devToolsErrorStyle.Render("Error: " + m.err.Error()),
+		))
+		return s.String()
+	}
 
 	// Title - same style as main menu
 	title := "📦 Kubernetes Pods"
@@ -229,8 +271,10 @@ func (m *DevToolsPodsModel) View() string {
 	s.WriteString(devToolsTitleStyle.Render(title))
 	s.WriteString("\n\n")
 
-	if m.loading {
-		s.WriteString(devToolsItemStyle.Render("Loading pods..."))
+	if m.loading || m.loadingAction {
+		s.WriteString("\n")
+		s.WriteString(m.spinner.View())
+		s.WriteString("\n")
 		return devToolsContainerStyle.Render(s.String())
 	}
 

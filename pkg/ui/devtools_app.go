@@ -10,9 +10,12 @@ import (
 // ShowDevToolsInterface shows the DevTools-style interface
 func ShowDevToolsInterface() error {
 	for {
+		// Clear screen before showing menu
+		fmt.Print("\033[H\033[2J")
+
 		// Show main menu
 		mainMenu := K8sManagerMenu()
-		p := tea.NewProgram(mainMenu)
+		p := tea.NewProgram(mainMenu, tea.WithAltScreen())
 
 		model, err := p.Run()
 		if err != nil {
@@ -52,9 +55,11 @@ func ShowDevToolsInterface() error {
 				fmt.Scanln()
 
 			case 3: // ConfigMaps & Secrets
-				fmt.Println("\n🔒 ConfigMaps & Secrets feature coming soon!")
-				fmt.Println("\nPress Enter to continue...")
-				fmt.Scanln()
+				if err := showDevToolsSecrets(); err != nil {
+					fmt.Printf("Error: %v\n", err)
+					fmt.Println("\nPress Enter to continue...")
+					fmt.Scanln()
+				}
 
 			case 4: // Namespaces
 				fmt.Println("\n🏷️ Namespaces feature coming soon!")
@@ -91,6 +96,8 @@ func ShowDevToolsInterface() error {
 
 func showDevToolsPods() error {
 	// Show namespace selection menu in DevTools style
+	fmt.Print("\033[H\033[2J") // Clear screen before namespace menu
+
 	namespaceMenu := NewDevToolsMenu("📦 Namespace Selection", []DevToolsMenuItem{
 		{
 			Number:      "1",
@@ -114,7 +121,7 @@ func showDevToolsPods() error {
 		},
 	})
 
-	p := tea.NewProgram(namespaceMenu)
+	p := tea.NewProgram(namespaceMenu, tea.WithAltScreen())
 	model, err := p.Run()
 	if err != nil {
 		return err
@@ -140,7 +147,7 @@ func showDevToolsPods() error {
 	case 2: // Specific namespace
 		// Show namespace selector with instant number selection
 		nsModel := NewDevToolsNamespaceModel()
-		nsProgram := tea.NewProgram(nsModel)
+		nsProgram := tea.NewProgram(nsModel, tea.WithAltScreen())
 
 		nsResult, err := nsProgram.Run()
 		if err != nil {
@@ -164,7 +171,7 @@ func showDevToolsPods() error {
 	// Show pods interface
 	for {
 		podsModel := NewDevToolsPodsModel(namespace, allNamespaces)
-		p := tea.NewProgram(podsModel)
+		p := tea.NewProgram(podsModel, tea.WithAltScreen())
 
 		result, err := p.Run()
 		if err != nil {
@@ -175,6 +182,10 @@ func showDevToolsPods() error {
 		if model, ok := result.(*DevToolsPodsModel); ok {
 			selectedPod := model.GetSelectedPod()
 			if selectedPod != nil {
+				// Clear screen and show loading
+				fmt.Print("\033[H\033[2J")
+				fmt.Printf("Loading actions for pod %s...\n", selectedPod.Name)
+
 				// Show pod actions
 				if err := showDevToolsPodActions(*selectedPod); err != nil {
 					fmt.Printf("Error: %v\n", err)
@@ -197,7 +208,7 @@ func showDevToolsPods() error {
 					},
 				})
 
-				contProgram := tea.NewProgram(continueMenu)
+				contProgram := tea.NewProgram(continueMenu, tea.WithAltScreen())
 				contResult, _ := contProgram.Run()
 
 				if contMenu, ok := contResult.(*DevToolsMenu); ok {
@@ -261,13 +272,13 @@ func showDevToolsPodActions(pod PodInfo) error {
 		},
 		{
 			Number:      "8",
-			Title:       "Resource Usage",
-			Description: "Show CPU and memory metrics",
+			Title:       "Environment Variables",
+			Description: "View and manage environment variables",
 		},
 		{
 			Number:      "9",
-			Title:       "Edit Pod",
-			Description: "Edit pod configuration (advanced)",
+			Title:       "Resource Usage",
+			Description: "Show CPU and memory metrics",
 		},
 		{
 			Number:      "0",
@@ -277,7 +288,7 @@ func showDevToolsPodActions(pod PodInfo) error {
 	}
 
 	actionsMenu := NewDevToolsMenu(fmt.Sprintf("🔧 Pod Actions: %s", pod.Name), actions)
-	p := tea.NewProgram(actionsMenu)
+	p := tea.NewProgram(actionsMenu, tea.WithAltScreen())
 
 	model, err := p.Run()
 	if err != nil {
@@ -333,14 +344,45 @@ func showDevToolsPodActions(pod PodInfo) error {
 					return errMsg.err
 				}
 				return nil
-			case 7: // Resource Usage
-				msg := enhancedModel.resourceUsage()
-				if errMsg, ok := msg.(actionResultMsg); ok && errMsg.err != nil {
-					return errMsg.err
+			case 7: // Environment Variables
+				// Show environment variable management menu
+				envMenu := NewDevToolsMenu(fmt.Sprintf("🔧 Environment Variables: %s", pod.Name), []DevToolsMenuItem{
+					{
+						Number:      "1",
+						Title:       "View Current Environment",
+						Description: "Show current environment variables",
+					},
+					{
+						Number:      "2",
+						Title:       "Assign Environment Variables",
+						Description: "Add environment variables from secrets/configmaps",
+					},
+					{
+						Number:      "0",
+						Title:       "Back",
+						Description: "Return to pod actions",
+					},
+				})
+
+				envP := tea.NewProgram(envMenu, tea.WithAltScreen())
+				envModel, err := envP.Run()
+				if err != nil {
+					return err
+				}
+
+				if envM, ok := envModel.(*DevToolsMenu); ok && envM.selected >= 0 {
+					switch envM.selected {
+					case 0: // View Current Environment
+						fmt.Print(ViewPodEnvVars(pod.Pod, client))
+						fmt.Println("\n\nPress Enter to continue...")
+						fmt.Scanln()
+					case 1: // Assign Environment Variables
+						return ShowPodEnvAssignment(pod.Pod, client)
+					}
 				}
 				return nil
-			case 8: // Edit Pod
-				msg := enhancedModel.editPod()
+			case 8: // Resource Usage
+				msg := enhancedModel.resourceUsage()
 				if errMsg, ok := msg.(actionResultMsg); ok && errMsg.err != nil {
 					return errMsg.err
 				}
