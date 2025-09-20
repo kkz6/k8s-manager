@@ -43,6 +43,9 @@ func (m MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "pods":
 					m.nextView = "pods"
 					return m, tea.Quit
+				case "secrets":
+					m.nextView = "configs"
+					return m, tea.Quit
 				case "quit":
 					m.quitting = true
 					return m, tea.Quit
@@ -59,6 +62,9 @@ func (m MainMenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch m.menu.Items[index].ID {
 				case "pods":
 					m.nextView = "pods"
+					return m, tea.Quit
+				case "secrets":
+					m.nextView = "configs"
 					return m, tea.Quit
 				case "quit":
 					m.quitting = true
@@ -163,10 +169,19 @@ func ShowMainMenu() error {
 			if menuModel.quitting {
 				return nil
 			}
-			if menuModel.nextView == "pods" {
+			switch menuModel.nextView {
+			case "pods":
 				// Clear screen and show pods view
 				fmt.Print("\033[H\033[2J")
 				if err := ShowPodsView(PodsOptions{}); err != nil {
+					return err
+				}
+				// Continue the loop to show menu again
+				continue
+			case "configs":
+				// Clear screen and show configs menu
+				fmt.Print("\033[H\033[2J")
+				if err := ShowConfigsMenu(); err != nil {
 					return err
 				}
 				// Continue the loop to show menu again
