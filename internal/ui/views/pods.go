@@ -102,7 +102,8 @@ func (m *PodsViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case showPodActionsMsg:
 		// Switch to pod actions view
-		return ShowPodActionsView(msg.namespace, msg.name)
+		model, cmd := ShowPodActionsView(msg.namespace, msg.name)
+		return model, cmd
 
 	case spinner.TickMsg:
 		if m.loading {

@@ -16,13 +16,15 @@ import (
 
 // PodActionsModel represents the pod actions menu
 type PodActionsModel struct {
-	namespace string
-	name      string
-	pod       *corev1.Pod
-	menu      *components.Menu
-	client    *services.K8sClient
-	loading   bool
-	quitting  bool
+	namespace       string
+	name            string
+	pod             *corev1.Pod
+	menu            *components.Menu
+	client          *services.K8sClient
+	loading         bool
+	quitting        bool
+	executing       bool
+	currentAction   string
 }
 
 // ShowPodActionsView shows the pod actions menu
@@ -193,6 +195,29 @@ func (m *PodActionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.menu.Title = fmt.Sprintf("%s Pod: %s (%s %s)", statusIcon, m.name, status, m.namespace)
 		}
 		return m, nil
+		
+	case podDetailsResultMsg:
+		m.executing = false
+		// Show the details in a new view
+		go func() {
+			detailsModel := NewPodDetailsModel(msg.title, msg.content)
+			p := tea.NewProgram(detailsModel, tea.WithAltScreen())
+			p.Run()
+		}()
+		// Return a command to reset state after a short delay
+		return m, tea.Tick(time.Millisecond*100, func(time.Time) tea.Msg {
+			return actionCompletedMsg{}
+		})
+		
+	case actionCompletedMsg:
+		// Action completed, reset executing state
+		m.executing = false
+		return m, nil
+		
+	case components.ErrorMsg:
+		m.executing = false
+		// Show error and continue
+		return m, nil
 	}
 
 	// Update menu
@@ -214,6 +239,11 @@ func (m *PodActionsModel) View() string {
 		return loadingView.View()
 	}
 
+	if m.executing {
+		loadingView := components.NewLoadingScreen(fmt.Sprintf("Executing: %s", m.currentAction))
+		return loadingView.View()
+	}
+
 	// Show menu with pod info in the description
 	return m.menu.View()
 }
@@ -222,20 +252,36 @@ func (m *PodActionsModel) View() string {
 func (m *PodActionsModel) handleAction(actionID string) (tea.Model, tea.Cmd) {
 	switch actionID {
 	case "describe":
+		m.executing = true
+		m.currentAction = "Describe Pod"
 		return m, m.describePod()
 	case "logs":
+		m.executing = true
+		m.currentAction = "View Logs"
 		return m, m.viewLogs()
 	case "logs-follow":
+		m.executing = true
+		m.currentAction = "Follow Logs"
 		return m, m.followLogs()
 	case "exec":
+		m.executing = true
+		m.currentAction = "Execute Shell"
 		return m, m.execShell()
 	case "port-forward":
+		m.executing = true
+		m.currentAction = "Port Forward"
 		return m, m.portForward()
 	case "env":
+		m.executing = true
+		m.currentAction = "Environment Variables"
 		return m, m.manageEnv()
 	case "restart":
+		m.executing = true
+		m.currentAction = "Restart Pod"
 		return m, m.restartPod()
 	case "delete":
+		m.executing = true
+		m.currentAction = "Delete Pod"
 		return m, m.deletePod()
 	case "back":
 		return m, tea.Quit
@@ -263,30 +309,43 @@ func (m *PodActionsModel) loadPod() tea.Msg {
 }
 
 func (m *PodActionsModel) describePod() tea.Cmd {
-	return tea.ExecProcess(exec.Command("kubectl", "describe", "pod", m.name, "-n", m.namespace), func(err error) tea.Msg {
-		if err != nil {
-			return components.ErrorMsg{Error: err}
-		}
-		return nil
-	})
+	return ShowPodDetails(m.namespace, m.name, "describe")
 }
 
 func (m *PodActionsModel) viewLogs() tea.Cmd {
-	return tea.ExecProcess(exec.Command("kubectl", "logs", m.name, "-n", m.namespace, "--tail=100"), func(err error) tea.Msg {
-		if err != nil {
+	return func() tea.Msg {
+		// Get container name if multiple containers
+		container := ""
+		if m.pod != nil && len(m.pod.Spec.Containers) > 1 {
+			container = m.pod.Spec.Containers[0].Name
+		}
+		
+		// Show logs view
+		model := NewLogsViewModel(m.namespace, m.name, container, false)
+		p := tea.NewProgram(model, tea.WithAltScreen())
+		if _, err := p.Run(); err != nil {
 			return components.ErrorMsg{Error: err}
 		}
-		return nil
-	})
+		return actionCompletedMsg{}
+	}
 }
 
 func (m *PodActionsModel) followLogs() tea.Cmd {
-	return tea.ExecProcess(exec.Command("kubectl", "logs", "-f", m.name, "-n", m.namespace), func(err error) tea.Msg {
-		if err != nil {
+	return func() tea.Msg {
+		// Get container name if multiple containers
+		container := ""
+		if m.pod != nil && len(m.pod.Spec.Containers) > 1 {
+			container = m.pod.Spec.Containers[0].Name
+		}
+		
+		// Show logs view with follow mode
+		model := NewLogsViewModel(m.namespace, m.name, container, true)
+		p := tea.NewProgram(model, tea.WithAltScreen())
+		if _, err := p.Run(); err != nil {
 			return components.ErrorMsg{Error: err}
 		}
-		return nil
-	})
+		return actionCompletedMsg{}
+	}
 }
 
 func (m *PodActionsModel) execShell() tea.Cmd {
@@ -328,7 +387,7 @@ func (m *PodActionsModel) execShell() tea.Cmd {
 			cmd.Run()
 		}
 		
-		return nil
+		return actionCompletedMsg{}
 	}
 }
 
@@ -353,13 +412,18 @@ func (m *PodActionsModel) portForward() tea.Cmd {
 		cmd.Stdin = os.Stdin
 		cmd.Run()
 		
-		return nil
+		return actionCompletedMsg{}
 	}
 }
 
 func (m *PodActionsModel) manageEnv() tea.Cmd {
-	// TODO: Implement environment variable management
-	return nil
+	return func() tea.Msg {
+		// TODO: Implement environment variable management
+		fmt.Println("Environment variable management coming soon...")
+		fmt.Println("\nPress Enter to continue...")
+		fmt.Scanln()
+		return actionCompletedMsg{}
+	}
 }
 
 func (m *PodActionsModel) restartPod() tea.Cmd {
@@ -390,7 +454,7 @@ func (m *PodActionsModel) restartPod() tea.Cmd {
 		fmt.Println("\nPress Enter to continue...")
 		fmt.Scanln()
 		
-		return nil
+		return actionCompletedMsg{}
 	}
 }
 
