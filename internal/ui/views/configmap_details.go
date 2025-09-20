@@ -99,8 +99,11 @@ func (m *ConfigMapDetailsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "a":
 			if m.viewMode == "list" {
-				// TODO: Add new key to ConfigMap
-				return m, nil
+				// Navigate to add key view
+				return m, Navigate(ViewAddConfigMapKey, map[string]string{
+					"namespace": m.namespace,
+					"name":      m.name,
+				})
 			}
 		case "d":
 			if m.viewMode == "list" && m.listView != nil {

@@ -102,8 +102,11 @@ func (m *SecretDetailsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "a":
 			if m.viewMode == "list" {
-				// TODO: Add new key to Secret
-				return m, nil
+				// Navigate to add key view
+				return m, Navigate(ViewAddSecretKey, map[string]string{
+					"namespace": m.namespace,
+					"name":      m.name,
+				})
 			}
 		case "x":
 			if m.viewMode == "list" && m.listView != nil {

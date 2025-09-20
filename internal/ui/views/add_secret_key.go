@@ -2,14 +2,12 @@ package views
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/karthickk/k8s-manager/internal/services"
 	"github.com/karthickk/k8s-manager/internal/ui/components"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -90,6 +88,9 @@ func (m *AddSecretKeyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if key != "" && value != "" {
 				m.saving = true
 				return m, m.addKey(key, value)
+			} else {
+				m.errorMsg = "Please fill in both key and value fields"
+				return m, nil
 			}
 		}
 	}
@@ -233,6 +234,9 @@ func (m *AddConfigMapKeyModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if key != "" && value != "" {
 				m.saving = true
 				return m, m.addKey(key, value)
+			} else {
+				m.errorMsg = "Please fill in both key and value fields"
+				return m, nil
 			}
 		}
 	}

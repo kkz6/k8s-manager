@@ -189,11 +189,12 @@ func (f FormModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// If on last field, submit form
 			if f.currentField == len(f.Fields)-1 {
 				f.submitted = true
-				return f, tea.Quit
+				return f, nil
 			}
 			f.nextField()
 		case "esc":
-			return f, tea.Quit
+			// Don't quit on esc, let parent handle it
+			return f, nil
 		}
 	}
 
