@@ -158,18 +158,18 @@ func (m *PodActionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
-		// Handle menu selection
+		// Handle menu selection by ID
 		if msg.String() == "enter" || msg.String() == " " {
 			selected := m.menu.GetSelected()
-			if selected != nil && selected.Action != nil {
-				return m, selected.Action()
+			if selected != nil {
+				return m.handleAction(selected.ID)
 			}
 		}
 
 		// Handle shortcut keys
 		for _, item := range m.menu.Items {
-			if item.Shortcut == msg.String() && item.Action != nil {
-				return m, item.Action()
+			if item.Shortcut == msg.String() {
+				return m.handleAction(item.ID)
 			}
 		}
 
@@ -218,6 +218,31 @@ func (m *PodActionsModel) View() string {
 	return m.menu.View()
 }
 
+// handleAction handles menu item selection
+func (m *PodActionsModel) handleAction(actionID string) (tea.Model, tea.Cmd) {
+	switch actionID {
+	case "describe":
+		return m, m.describePod()
+	case "logs":
+		return m, m.viewLogs()
+	case "logs-follow":
+		return m, m.followLogs()
+	case "exec":
+		return m, m.execShell()
+	case "port-forward":
+		return m, m.portForward()
+	case "env":
+		return m, m.manageEnv()
+	case "restart":
+		return m, m.restartPod()
+	case "delete":
+		return m, m.deletePod()
+	case "back":
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
 // Pod action implementations
 
 type podLoadedMsg struct {
@@ -238,49 +263,30 @@ func (m *PodActionsModel) loadPod() tea.Msg {
 }
 
 func (m *PodActionsModel) describePod() tea.Cmd {
-	return func() tea.Msg {
-		// Exit to run kubectl describe
-		cmd := exec.Command("kubectl", "describe", "pod", m.name, "-n", m.namespace)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Stdin = os.Stdin
-		
-		// Run command
-		cmd.Run()
-		
-		fmt.Println("\nPress Enter to continue...")
-		fmt.Scanln()
-		
+	return tea.ExecProcess(exec.Command("kubectl", "describe", "pod", m.name, "-n", m.namespace), func(err error) tea.Msg {
+		if err != nil {
+			return components.ErrorMsg{Error: err}
+		}
 		return nil
-	}
+	})
 }
 
 func (m *PodActionsModel) viewLogs() tea.Cmd {
-	return func() tea.Msg {
-		cmd := exec.Command("kubectl", "logs", m.name, "-n", m.namespace, "--tail=100")
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Run()
-		
-		fmt.Println("\nPress Enter to continue...")
-		fmt.Scanln()
-		
+	return tea.ExecProcess(exec.Command("kubectl", "logs", m.name, "-n", m.namespace, "--tail=100"), func(err error) tea.Msg {
+		if err != nil {
+			return components.ErrorMsg{Error: err}
+		}
 		return nil
-	}
+	})
 }
 
 func (m *PodActionsModel) followLogs() tea.Cmd {
-	return func() tea.Msg {
-		cmd := exec.Command("kubectl", "logs", "-f", m.name, "-n", m.namespace)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Stdin = os.Stdin
-		
-		fmt.Println("Following logs... Press Ctrl+C to stop")
-		cmd.Run()
-		
+	return tea.ExecProcess(exec.Command("kubectl", "logs", "-f", m.name, "-n", m.namespace), func(err error) tea.Msg {
+		if err != nil {
+			return components.ErrorMsg{Error: err}
+		}
 		return nil
-	}
+	})
 }
 
 func (m *PodActionsModel) execShell() tea.Cmd {
