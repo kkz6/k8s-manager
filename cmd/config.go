@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
@@ -204,7 +206,7 @@ func runConfigShow(cmd *cobra.Command, args []string) error {
 	fmt.Println("☸️  Kubernetes Settings:")
 	fmt.Printf("  Cluster:    %s\n", cfg.K8s.ClusterName)
 	fmt.Printf("  Namespace:  %s\n", cfg.K8s.Namespace)
-	fmt.Printf("  Config:     %s\n", cfg.K8s.ConfigPath)
+	fmt.Printf("  Config:     %s\n", filepath.Join(os.Getenv("HOME"), ".kube", "config"))
 	fmt.Println()
 
 	fmt.Println("🔐 SSH Settings:")

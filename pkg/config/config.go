@@ -29,7 +29,6 @@ type K8sConfig struct {
 	ClusterName string `mapstructure:"cluster_name"`
 	Namespace   string `mapstructure:"namespace"`
 	Context     string `mapstructure:"context"`
-	ConfigPath  string `mapstructure:"config_path"`
 }
 
 // SSHConfig holds SSH-specific configuration
@@ -115,7 +114,6 @@ func setDefaults() {
 	viper.SetDefault("gcp.zone", "us-central1-a")
 	viper.SetDefault("gcp.region", "us-central1")
 	viper.SetDefault("k8s.namespace", "default")
-	viper.SetDefault("k8s.config_path", filepath.Join(os.Getenv("HOME"), ".kube", "config"))
 	viper.SetDefault("ssh.port", 22)
 	viper.SetDefault("ssh.username", "root")
 	viper.SetDefault("log_level", "info")

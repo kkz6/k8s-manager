@@ -2,8 +2,11 @@ package ui
 
 import (
 	"fmt"
+	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/karthickk/k8s-manager/pkg/k8s"
 )
 
@@ -182,9 +185,19 @@ func showDevToolsPods() error {
 		if model, ok := result.(*DevToolsPodsModel); ok {
 			selectedPod := model.GetSelectedPod()
 			if selectedPod != nil {
-				// Clear screen and show loading
-				fmt.Print("\033[H\033[2J")
-				fmt.Printf("Loading actions for pod %s...\n", selectedPod.Name)
+				// Show loading screen with spinner
+				loadingModel := NewPodActionsLoadingModel(selectedPod.Name)
+				loadingProgram := tea.NewProgram(loadingModel, tea.WithAltScreen())
+				
+				// Start loading in background
+				go func() {
+					time.Sleep(500 * time.Millisecond) // Brief loading time
+					loadingProgram.Send(loadingCompleteMsg{})
+				}()
+				
+				if _, err := loadingProgram.Run(); err != nil {
+					return err
+				}
 
 				// Show pod actions
 				if err := showDevToolsPodActions(*selectedPod); err != nil {
@@ -394,4 +407,83 @@ func showDevToolsPodActions(pod PodInfo) error {
 	}
 
 	return nil
+}
+
+// PodActionsLoadingModel shows a loading screen with spinner
+type PodActionsLoadingModel struct {
+	spinner  spinner.Model
+	podName  string
+	quitting bool
+}
+
+type loadingCompleteMsg struct{}
+
+func NewPodActionsLoadingModel(podName string) PodActionsLoadingModel {
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	return PodActionsLoadingModel{
+		spinner: s,
+		podName: podName,
+	}
+}
+
+func (m PodActionsLoadingModel) Init() tea.Cmd {
+	return m.spinner.Tick
+}
+
+func (m PodActionsLoadingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "q", "esc", "ctrl+c":
+			m.quitting = true
+			return m, tea.Quit
+		}
+
+	case loadingCompleteMsg:
+		m.quitting = true
+		return m, tea.Quit
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+	}
+
+	return m, nil
+}
+
+func (m PodActionsLoadingModel) View() string {
+	if m.quitting {
+		return ""
+	}
+
+	// Center the loading screen
+	containerStyle := lipgloss.NewStyle().
+		Width(80).
+		Height(12).
+		Align(lipgloss.Center, lipgloss.Center).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("62")).
+		Padding(1, 2)
+
+	titleStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("220")).
+		Bold(true)
+
+	spinnerStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("205"))
+
+	content := fmt.Sprintf("\n\n%s Loading actions for pod\n\n%s\n\n",
+		spinnerStyle.Render(m.spinner.View()),
+		titleStyle.Render(m.podName))
+
+	// Add a subtle message
+	msgStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("245")).
+		Italic(true)
+	content += msgStyle.Render("Please wait...")
+
+	return containerStyle.Render(content)
 }

@@ -2,7 +2,6 @@ package config
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,7 +22,6 @@ func TestConfigDefaults(t *testing.T) {
 	assert.Equal(t, "us-central1-a", cfg.GCP.Zone)
 	assert.Equal(t, "us-central1", cfg.GCP.Region)
 	assert.Equal(t, "default", cfg.K8s.Namespace)
-	assert.Equal(t, filepath.Join(tempDir, ".kube", "config"), cfg.K8s.ConfigPath)
 	assert.Equal(t, 22, cfg.SSH.Port)
 	assert.Equal(t, "root", cfg.SSH.Username)
 	assert.Equal(t, "info", cfg.LogLevel)

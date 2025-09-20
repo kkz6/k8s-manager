@@ -3,8 +3,7 @@ gcp:
     region: us-central1
     zone: ""
 k8s:
-    cluster_name: laravel-cluster-stg
-    config_path: /Users/karthickk/.kube/config
+    cluster_name: gke_zyoshu-test_us-central1_laravel-cluster-stg
     namespace: laravel-app
 log_level: info
 ssh:

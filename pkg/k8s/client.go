@@ -120,10 +120,7 @@ func getClusterCredentials(cfg *config.Config) error {
 
 // buildKubeConfig builds the Kubernetes client configuration
 func buildKubeConfig(cfg *config.Config) (*rest.Config, error) {
-	kubeConfigPath := cfg.K8s.ConfigPath
-	if kubeConfigPath == "" {
-		kubeConfigPath = filepath.Join(os.Getenv("HOME"), ".kube", "config")
-	}
+	kubeConfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
 
 	// Use the kubeconfig file
 	config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)

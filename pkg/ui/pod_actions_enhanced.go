@@ -8,7 +8,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/karthickk/k8s-manager/pkg/k8s"
 	"github.com/pterm/pterm"
 	corev1 "k8s.io/api/core/v1"
@@ -17,17 +19,19 @@ import (
 
 // EnhancedPodActionsModel represents the enhanced pod actions view
 type EnhancedPodActionsModel struct {
-	pod         PodInfo
-	menu        *List
-	client      *k8s.Client
-	width       int
-	height      int
-	loading     bool
-	executing   bool
-	message     string
-	messageType string
-	showHelp    bool
-	keys        NavigationKeys
+	pod            PodInfo
+	menu           *List
+	client         *k8s.Client
+	width          int
+	height         int
+	loading        bool
+	executing      bool
+	message        string
+	messageType    string
+	showHelp       bool
+	keys           NavigationKeys
+	spinner        spinner.Model
+	currentAction  string
 }
 
 // NewEnhancedPodActionsModel creates a new enhanced pod actions model
@@ -102,12 +106,18 @@ func NewEnhancedPodActionsModel(pod PodInfo, client *k8s.Client) EnhancedPodActi
 	menu := NewMenu(menuItems)
 	keys := DefaultNavigationKeys()
 
+	// Create spinner
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+
 	return EnhancedPodActionsModel{
 		pod:     pod,
 		menu:    menu,
 		client:  client,
 		loading: false,
 		keys:    keys,
+		spinner: s,
 	}
 }
 
@@ -119,7 +129,7 @@ func (m EnhancedPodActionsModel) Init() tea.Cmd {
 			return m.executeAction(idx)
 		}
 	}
-	return nil
+	return m.spinner.Tick
 }
 
 func (m EnhancedPodActionsModel) executeAction(actionIndex int) tea.Cmd {
@@ -127,6 +137,10 @@ func (m EnhancedPodActionsModel) executeAction(actionIndex int) tea.Cmd {
 		if actionIndex >= len(m.menu.MenuItems) {
 			return nil
 		}
+
+		// Set the current action
+		m.currentAction = m.menu.MenuItems[actionIndex].Title
+		m.executing = true
 
 		// Handle different actions
 		switch actionIndex {
@@ -165,6 +179,11 @@ func (m EnhancedPodActionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Don't process keys while executing
+		if m.executing {
+			return m, nil
+		}
+
 		// Handle special keys first
 		switch msg.String() {
 		case "ctrl+c", "q":
@@ -190,12 +209,21 @@ func (m EnhancedPodActionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case actionResultMsg:
 		m.executing = false
+		m.currentAction = ""
 		if msg.err != nil {
 			m.message = fmt.Sprintf("Error: %v", msg.err)
 			m.messageType = "error"
 		} else if msg.message != "" {
 			m.message = msg.message
 			m.messageType = "success"
+		}
+		return m, nil
+
+	case spinner.TickMsg:
+		if m.executing {
+			var cmd tea.Cmd
+			m.spinner, cmd = m.spinner.Update(msg)
+			return m, cmd
 		}
 		return m, nil
 	}
@@ -254,8 +282,17 @@ func (m EnhancedPodActionsModel) View() string {
 	s.WriteString(ContentBoxStyle.Render(details.String()))
 	s.WriteString("\n")
 
+	// Show loading spinner when executing
+	if m.executing {
+		s.WriteString("\n")
+		s.WriteString(lipgloss.NewStyle().
+			Padding(1, 2).
+			Render(fmt.Sprintf("%s Executing %s...", m.spinner.View(), m.currentAction)))
+		s.WriteString("\n")
+	}
+
 	// Message
-	if m.message != "" {
+	if m.message != "" && !m.executing {
 		s.WriteString(RenderMessage(m.messageType, m.message))
 		s.WriteString("\n")
 	}

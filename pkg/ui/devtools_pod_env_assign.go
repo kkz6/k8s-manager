@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/karthickk/k8s-manager/pkg/k8s"
@@ -14,18 +15,21 @@ import (
 
 // PodEnvAssignModel manages environment assignment to pods
 type PodEnvAssignModel struct {
-	pod          *corev1.Pod
-	client       *k8s.Client
-	secrets      []SecretInfo
-	configMaps   []ConfigMapInfo
-	envVars      []EnvVarAssignment
-	selected     int
-	step         int // 0: select source, 1: select secret/cm, 2: select keys, 3: review
-	sourceType   int // 0: secret, 1: configmap, 2: direct value
-	selectedItem string
-	selectedKeys map[string]bool
-	message      string
-	messageType  string
+	pod             *corev1.Pod
+	client          *k8s.Client
+	secrets         []SecretInfo
+	configMaps      []ConfigMapInfo
+	envVars         []EnvVarAssignment
+	selected        int
+	step            int // 0: select source, 1: select secret/cm, 2: select keys, 3: review, 4: direct input
+	sourceType      int // 0: secret, 1: configmap, 2: direct value
+	selectedItem    string
+	selectedKeys    map[string]bool
+	message         string
+	messageType     string
+	directEnvName   string
+	directEnvValue  string
+	inputMode       int // 0: name, 1: value
 }
 
 // ConfigMapInfo holds configmap information
@@ -52,7 +56,7 @@ func NewPodEnvAssignModel(pod *corev1.Pod, client *k8s.Client) *PodEnvAssignMode
 		client:       client,
 		envVars:      []EnvVarAssignment{},
 		selectedKeys: make(map[string]bool),
-		selected:     -1,
+		selected:     0,
 		step:         0,
 	}
 }
@@ -146,7 +150,8 @@ func (m *PodEnvAssignModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			case "3": // Direct value
 				m.sourceType = 2
-				m.step = 3 // Skip to review for direct values
+				m.step = 4 // Go to direct input step
+				m.inputMode = 0 // Start with name input
 				return m, nil
 
 			case "0", "q", "esc":
@@ -225,8 +230,74 @@ func (m *PodEnvAssignModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "a": // Apply
 				return m, m.applyEnvVars()
 
+			case "n": // Add another
+				if m.sourceType == 2 {
+					m.step = 4
+					m.directEnvName = ""
+					m.directEnvValue = ""
+					m.inputMode = 0
+				}
+				return m, nil
+
 			case "b": // Back
-				m.step = 2
+				if m.sourceType == 2 {
+					m.step = 0
+				} else {
+					m.step = 2
+				}
+				return m, nil
+
+			case "q", "esc":
+				return m, tea.Quit
+			}
+
+		case 4: // Direct input
+			// Handle character input for direct env vars
+			if len(keyStr) == 1 && keyStr != " " {
+				r := rune(keyStr[0])
+				if m.inputMode == 0 {
+					// Name: Allow letters, digits, underscore
+					if unicode.IsLetter(r) || unicode.IsDigit(r) || keyStr == "_" {
+						m.directEnvName += strings.ToUpper(keyStr)
+					}
+				} else {
+					// Value: Allow any printable character
+					if unicode.IsPrint(r) {
+						m.directEnvValue += keyStr
+					}
+				}
+				return m, nil
+			}
+			
+			// Handle space in value mode
+			if keyStr == " " && m.inputMode == 1 {
+				m.directEnvValue += " "
+				return m, nil
+			}
+
+			switch keyStr {
+			case "backspace":
+				if m.inputMode == 0 && len(m.directEnvName) > 0 {
+					m.directEnvName = m.directEnvName[:len(m.directEnvName)-1]
+				} else if m.inputMode == 1 && len(m.directEnvValue) > 0 {
+					m.directEnvValue = m.directEnvValue[:len(m.directEnvValue)-1]
+				}
+				return m, nil
+
+			case "enter", "tab":
+				if m.inputMode == 0 && m.directEnvName != "" {
+					m.inputMode = 1 // Move to value input
+				} else if m.inputMode == 1 && m.directEnvValue != "" {
+					// Add to env vars
+					m.envVars = append(m.envVars, EnvVarAssignment{
+						Name:       m.directEnvName,
+						Value:      m.directEnvValue,
+						SourceType: "direct",
+					})
+					m.directEnvName = ""
+					m.directEnvValue = ""
+					m.step = 3 // Go to review
+				}
 				return m, nil
 
 			case "q", "esc":
@@ -246,9 +317,9 @@ func (m *PodEnvAssignModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selected++
 			}
 
-		case "enter":
+		case "enter", " ":
 			// Handle selection based on step
-			return m, nil
+			return m, m.handleEnterKey()
 		}
 	}
 
@@ -269,24 +340,30 @@ func (m *PodEnvAssignModel) View() string {
 		s.WriteString(devToolsNumberStyle.Render("Select Environment Source:"))
 		s.WriteString("\n\n")
 
-		s.WriteString(devToolsNumberStyle.Render("1.") + "  " + devToolsItemStyle.Render("From Secret"))
-		s.WriteString("\n")
-		s.WriteString(devToolsDescriptionStyle.Render("   Use values from Kubernetes secrets"))
-		s.WriteString("\n")
+		options := []struct {
+			title string
+			desc  string
+			num   string
+		}{
+			{"From Secret", "Use values from Kubernetes secrets", "1"},
+			{"From ConfigMap", "Use values from ConfigMaps", "2"},
+			{"Direct Values", "Enter environment variables directly", "3"},
+			{"Back", "Return to pod actions", "0"},
+		}
 
-		s.WriteString(devToolsNumberStyle.Render("2.") + "  " + devToolsItemStyle.Render("From ConfigMap"))
-		s.WriteString("\n")
-		s.WriteString(devToolsDescriptionStyle.Render("   Use values from ConfigMaps"))
-		s.WriteString("\n")
-
-		s.WriteString(devToolsNumberStyle.Render("3.") + "  " + devToolsItemStyle.Render("Direct Values"))
-		s.WriteString("\n")
-		s.WriteString(devToolsDescriptionStyle.Render("   Enter environment variables directly"))
-		s.WriteString("\n\n")
-
-		s.WriteString(devToolsNumberStyle.Render("0.") + "  " + devToolsItemStyle.Render("Back"))
-		s.WriteString("\n")
-		s.WriteString(devToolsDescriptionStyle.Render("   Return to pod actions"))
+		for i, opt := range options {
+			if i == m.selected {
+				s.WriteString(devToolsSelectedStyle.Render(fmt.Sprintf("▸ %s. %s", opt.num, opt.title)))
+			} else {
+				s.WriteString(fmt.Sprintf("  %s  %s", devToolsNumberStyle.Render(opt.num+"."), devToolsItemStyle.Render(opt.title)))
+			}
+			s.WriteString("\n")
+			s.WriteString(devToolsDescriptionStyle.Render(fmt.Sprintf("   %s", opt.desc)))
+			s.WriteString("\n")
+			if i < len(options)-1 {
+				s.WriteString("\n")
+			}
+		}
 
 	case 1: // Select secret or configmap
 		if m.sourceType == 0 {
@@ -297,11 +374,11 @@ func (m *PodEnvAssignModel) View() string {
 				s.WriteString(devToolsDescriptionStyle.Render("No secrets available in this namespace"))
 			} else {
 				for i, secret := range m.secrets {
-					if i >= 9 {
-						break
+					if i == m.selected {
+						s.WriteString(devToolsSelectedStyle.Render(fmt.Sprintf("▸ %d. %s", i+1, secret.Name)))
+					} else {
+						s.WriteString(fmt.Sprintf("  %s  %s", devToolsNumberStyle.Render(fmt.Sprintf("%d.", i+1)), devToolsItemStyle.Render(secret.Name)))
 					}
-					s.WriteString(devToolsNumberStyle.Render(fmt.Sprintf("%d.", i+1)))
-					s.WriteString("  " + devToolsItemStyle.Render(secret.Name))
 					s.WriteString("\n")
 					s.WriteString(devToolsDescriptionStyle.Render(
 						fmt.Sprintf("   Type: %s, Keys: %d", secret.Type, secret.DataCount)))
@@ -316,11 +393,11 @@ func (m *PodEnvAssignModel) View() string {
 				s.WriteString(devToolsDescriptionStyle.Render("No configmaps available in this namespace"))
 			} else {
 				for i, cm := range m.configMaps {
-					if i >= 9 {
-						break
+					if i == m.selected {
+						s.WriteString(devToolsSelectedStyle.Render(fmt.Sprintf("▸ %d. %s", i+1, cm.Name)))
+					} else {
+						s.WriteString(fmt.Sprintf("  %s  %s", devToolsNumberStyle.Render(fmt.Sprintf("%d.", i+1)), devToolsItemStyle.Render(cm.Name)))
 					}
-					s.WriteString(devToolsNumberStyle.Render(fmt.Sprintf("%d.", i+1)))
-					s.WriteString("  " + devToolsItemStyle.Render(cm.Name))
 					s.WriteString("\n")
 					s.WriteString(devToolsDescriptionStyle.Render(fmt.Sprintf("   Keys: %d", cm.DataCount)))
 					s.WriteString("\n")
@@ -329,7 +406,15 @@ func (m *PodEnvAssignModel) View() string {
 		}
 
 		s.WriteString("\n")
-		s.WriteString(devToolsNumberStyle.Render("0.") + "  " + devToolsItemStyle.Render("Back"))
+		backIdx := len(m.secrets)
+		if m.sourceType == 1 {
+			backIdx = len(m.configMaps)
+		}
+		if m.selected == backIdx {
+			s.WriteString(devToolsSelectedStyle.Render("▸ 0. Back"))
+		} else {
+			s.WriteString(fmt.Sprintf("  %s  %s", devToolsNumberStyle.Render("0."), devToolsItemStyle.Render("Back")))
+		}
 
 	case 2: // Select keys
 		s.WriteString(devToolsNumberStyle.Render(fmt.Sprintf("Select Keys from %s:", m.selectedItem)))
@@ -337,23 +422,21 @@ func (m *PodEnvAssignModel) View() string {
 
 		keys := m.getAvailableKeys()
 		for i, key := range keys {
-			if i >= 9 {
-				s.WriteString(devToolsDescriptionStyle.Render(fmt.Sprintf("... and %d more keys", len(keys)-9)))
-				break
-			}
-
 			checkbox := "☐"
 			if m.selectedKeys[key] {
 				checkbox = "☑"
 			}
 
-			s.WriteString(devToolsNumberStyle.Render(fmt.Sprintf("%d.", i+1)))
-			s.WriteString(fmt.Sprintf("  %s %s", checkbox, devToolsItemStyle.Render(key)))
+			if i == m.selected {
+				s.WriteString(devToolsSelectedStyle.Render(fmt.Sprintf("▸ %d. %s %s", i+1, checkbox, key)))
+			} else {
+				s.WriteString(fmt.Sprintf("  %s  %s %s", devToolsNumberStyle.Render(fmt.Sprintf("%d.", i+1)), checkbox, devToolsItemStyle.Render(key)))
+			}
 			s.WriteString("\n")
 		}
 
 		s.WriteString("\n")
-		s.WriteString(devToolsHelpStyle.Render("1-9 toggle • a select all • n none • c continue • 0 back"))
+		s.WriteString(devToolsHelpStyle.Render("↑/↓ navigate • Enter/Space toggle • a select all • n none • c continue • 0 back"))
 
 	case 3: // Review
 		s.WriteString(devToolsNumberStyle.Render("Review Environment Variables:"))
@@ -363,18 +446,81 @@ func (m *PodEnvAssignModel) View() string {
 			s.WriteString(devToolsDescriptionStyle.Render("No environment variables to add"))
 		} else {
 			for _, env := range m.envVars {
-				s.WriteString(fmt.Sprintf("%s = %s:%s/%s\n",
-					devToolsInfoStyle.Render(env.Name),
-					devToolsDescriptionStyle.Render(env.SourceType),
-					env.SourceName,
-					env.Key))
+				if env.SourceType == "direct" {
+					s.WriteString(fmt.Sprintf("%s = %s\n",
+						devToolsInfoStyle.Render(env.Name),
+						devToolsDescriptionStyle.Render(env.Value)))
+				} else {
+					s.WriteString(fmt.Sprintf("%s = %s:%s/%s\n",
+						devToolsInfoStyle.Render(env.Name),
+						devToolsDescriptionStyle.Render(env.SourceType),
+						env.SourceName,
+						env.Key))
+				}
 			}
 		}
 
 		s.WriteString("\n")
 		s.WriteString(devToolsSuccessStyle.Render(fmt.Sprintf("Will add %d environment variables to pod", len(m.envVars))))
 		s.WriteString("\n\n")
-		s.WriteString(devToolsHelpStyle.Render("a apply • b back • q quit"))
+		if m.sourceType == 2 {
+			s.WriteString(devToolsHelpStyle.Render("a apply • n add another • b back • q quit"))
+		} else {
+			s.WriteString(devToolsHelpStyle.Render("a apply • b back • q quit"))
+		}
+
+	case 4: // Direct input
+		s.WriteString(devToolsNumberStyle.Render("Add Environment Variable:"))
+		s.WriteString("\n\n")
+
+		// Name input
+		nameStyle := devToolsItemStyle
+		if m.inputMode == 0 {
+			nameStyle = devToolsSelectedStyle
+		}
+		s.WriteString(nameStyle.Render("Name:"))
+		s.WriteString("  ")
+		if m.directEnvName == "" {
+			s.WriteString(devToolsDescriptionStyle.Render("Enter variable name"))
+		} else {
+			s.WriteString(devToolsInfoStyle.Render(m.directEnvName))
+		}
+		if m.inputMode == 0 {
+			s.WriteString(devToolsSelectedStyle.Render("_")) // Cursor
+		}
+		s.WriteString("\n\n")
+
+		// Value input
+		valueStyle := devToolsItemStyle
+		if m.inputMode == 1 {
+			valueStyle = devToolsSelectedStyle
+		}
+		s.WriteString(valueStyle.Render("Value:"))
+		s.WriteString(" ")
+		if m.directEnvValue == "" {
+			s.WriteString(devToolsDescriptionStyle.Render("Enter variable value"))
+		} else {
+			s.WriteString(devToolsInfoStyle.Render(m.directEnvValue))
+		}
+		if m.inputMode == 1 {
+			s.WriteString(devToolsSelectedStyle.Render("_")) // Cursor
+		}
+		s.WriteString("\n\n")
+
+		// Existing variables
+		if len(m.envVars) > 0 {
+			s.WriteString("\n")
+			s.WriteString(devToolsDescriptionStyle.Render(fmt.Sprintf("Already added %d variable(s):", len(m.envVars))))
+			s.WriteString("\n")
+			for _, env := range m.envVars {
+				if env.SourceType == "direct" {
+					s.WriteString(devToolsDescriptionStyle.Render(fmt.Sprintf("  • %s = %s\n", env.Name, env.Value)))
+				}
+			}
+		}
+
+		s.WriteString("\n\n")
+		s.WriteString(devToolsHelpStyle.Render("Type to enter • Tab/Enter next field • Enter (on value) save • Esc cancel"))
 	}
 
 	// Message
@@ -390,6 +536,12 @@ func (m *PodEnvAssignModel) View() string {
 		default:
 			s.WriteString(devToolsInfoStyle.Render("• " + m.message))
 		}
+	}
+
+	// Add navigation help at bottom
+	if m.step < 3 && m.step != 4 {
+		s.WriteString("\n\n")
+		s.WriteString(devToolsHelpStyle.Render("↑/k up • ↓/j down • Enter select • q/Esc quit"))
 	}
 
 	return devToolsContainerStyle.Render(s.String())
@@ -474,16 +626,74 @@ type envApplyMsg struct {
 
 func (m *PodEnvAssignModel) getMaxSelection() int {
 	switch m.step {
+	case 0:
+		return 4 // 3 options + back
 	case 1:
 		if m.sourceType == 0 {
-			return len(m.secrets)
+			return len(m.secrets) + 1 // +1 for back
 		}
-		return len(m.configMaps)
+		return len(m.configMaps) + 1 // +1 for back
 	case 2:
 		return len(m.getAvailableKeys())
+	case 4:
+		return 0 // No selection in direct input mode
 	default:
 		return 0
 	}
+}
+
+func (m *PodEnvAssignModel) handleEnterKey() tea.Cmd {
+	switch m.step {
+	case 0: // Select source type
+		switch m.selected {
+		case 0: // Secret
+			m.sourceType = 0
+			m.step = 1
+			m.selected = 0
+		case 1: // ConfigMap
+			m.sourceType = 1
+			m.step = 1
+			m.selected = 0
+		case 2: // Direct values
+			m.sourceType = 2
+			m.step = 3
+		case 3: // Back
+			return tea.Quit
+		}
+
+	case 1: // Select secret or configmap
+		if m.sourceType == 0 { // Secrets
+			if m.selected < len(m.secrets) {
+				m.selectedItem = m.secrets[m.selected].Name
+				m.step = 2
+				m.selected = 0
+				m.loadKeys()
+			} else if m.selected == len(m.secrets) { // Back
+				m.step = 0
+				m.selected = 0
+			}
+		} else { // ConfigMaps
+			if m.selected < len(m.configMaps) {
+				m.selectedItem = m.configMaps[m.selected].Name
+				m.step = 2
+				m.selected = 0
+				m.loadKeys()
+			} else if m.selected == len(m.configMaps) { // Back
+				m.step = 0
+				m.selected = 0
+			}
+		}
+
+	case 2: // Select keys
+		keys := m.getAvailableKeys()
+		if m.selected < len(keys) {
+			// Toggle key selection
+			key := keys[m.selected]
+			m.selectedKeys[key] = !m.selectedKeys[key]
+		}
+	}
+
+	return nil
 }
 
 // ShowPodEnvAssignment shows the pod environment assignment interface
