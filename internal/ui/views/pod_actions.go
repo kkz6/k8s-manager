@@ -3,7 +3,6 @@ package views
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"time"
 
@@ -349,79 +348,59 @@ func (m *PodActionsModel) followLogs() tea.Cmd {
 }
 
 func (m *PodActionsModel) execShell() tea.Cmd {
-	return func() tea.Msg {
-		// Check for multiple containers
-		containerName := ""
-		if m.pod != nil && len(m.pod.Spec.Containers) > 1 {
-			fmt.Println("Multiple containers found:")
-			for i, c := range m.pod.Spec.Containers {
-				fmt.Printf("  %d. %s\n", i+1, c.Name)
-			}
-			fmt.Print("Select container (1-", len(m.pod.Spec.Containers), "): ")
-			
-			var choice int
-			fmt.Scanln(&choice)
-			if choice > 0 && choice <= len(m.pod.Spec.Containers) {
-				containerName = m.pod.Spec.Containers[choice-1].Name
-			}
+	return tea.ExecProcess(exec.Command("bash", "-c", m.getExecCommand()), func(err error) tea.Msg {
+		if err != nil {
+			return components.ErrorMsg{Error: err}
 		}
-		
-		args := []string{"exec", "-it", m.name, "-n", m.namespace}
-		if containerName != "" {
-			args = append(args, "-c", containerName)
-		}
-		args = append(args, "--", "/bin/bash")
-		
-		cmd := exec.Command("kubectl", args...)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Stdin = os.Stdin
-		
-		// Try bash first, fall back to sh
-		if err := cmd.Run(); err != nil {
-			args[len(args)-1] = "/bin/sh"
-			cmd = exec.Command("kubectl", args...)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			cmd.Stdin = os.Stdin
-			cmd.Run()
-		}
-		
 		return actionCompletedMsg{}
+	})
+}
+
+// getExecCommand builds the kubectl exec command
+func (m *PodActionsModel) getExecCommand() string {
+	// Build the base command
+	baseCmd := fmt.Sprintf("kubectl exec -it %s -n %s", m.name, m.namespace)
+	
+	// Check for multiple containers
+	if m.pod != nil && len(m.pod.Spec.Containers) > 1 {
+		// For now, use the first container
+		// TODO: Add container selection UI
+		baseCmd += fmt.Sprintf(" -c %s", m.pod.Spec.Containers[0].Name)
 	}
+	
+	// Try bash first, fall back to sh
+	cmd := baseCmd + " -- /bin/bash || " + baseCmd + " -- /bin/sh"
+	
+	return cmd
 }
 
 func (m *PodActionsModel) portForward() tea.Cmd {
 	return func() tea.Msg {
-		var localPort, remotePort int
+		// TODO: Add proper UI for port input
+		// For now, use common ports
+		localPort := 8080
+		remotePort := 80
 		
-		fmt.Print("Enter local port: ")
-		fmt.Scanln(&localPort)
+		cmd := fmt.Sprintf("echo 'Port forwarding %d:%d... Press Ctrl+C to stop' && kubectl port-forward pod/%s %d:%d -n %s",
+			localPort, remotePort, m.name, localPort, remotePort, m.namespace)
 		
-		fmt.Print("Enter pod port: ")
-		fmt.Scanln(&remotePort)
-		
-		fmt.Printf("Port forwarding %d:%d... Press Ctrl+C to stop\n", localPort, remotePort)
-		
-		cmd := exec.Command("kubectl", "port-forward", 
-			fmt.Sprintf("pod/%s", m.name),
-			fmt.Sprintf("%d:%d", localPort, remotePort),
-			"-n", m.namespace)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Stdin = os.Stdin
-		cmd.Run()
-		
-		return actionCompletedMsg{}
+		return tea.ExecProcess(exec.Command("bash", "-c", cmd), func(err error) tea.Msg {
+			if err != nil {
+				return components.ErrorMsg{Error: err}
+			}
+			return actionCompletedMsg{}
+		})()
 	}
 }
 
 func (m *PodActionsModel) manageEnv() tea.Cmd {
 	return func() tea.Msg {
-		// TODO: Implement environment variable management
-		fmt.Println("Environment variable management coming soon...")
-		fmt.Println("\nPress Enter to continue...")
-		fmt.Scanln()
+		// Show environment variable manager
+		model := NewEnvManagerModel(m.namespace, m.name)
+		p := tea.NewProgram(model, tea.WithAltScreen())
+		if _, err := p.Run(); err != nil {
+			return components.ErrorMsg{Error: err}
+		}
 		return actionCompletedMsg{}
 	}
 }
