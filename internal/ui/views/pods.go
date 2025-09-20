@@ -53,7 +53,7 @@ func ShowPodsView(options PodsOptions) error {
 		spinner: components.NewSpinner("Loading pods..."),
 	}
 
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
 		return err
 	}

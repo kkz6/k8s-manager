@@ -45,7 +45,7 @@ func ShowConfigsMenu() error {
 		menu: *menu,
 	}
 
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model)
 	finalModel, err := p.Run()
 	if err != nil {
 		return fmt.Errorf("error running configs menu: %w", err)
@@ -55,10 +55,8 @@ func ShowConfigsMenu() error {
 	if menuModel, ok := finalModel.(ConfigsMenuModel); ok {
 		switch menuModel.nextView {
 		case "configmaps":
-			fmt.Print("\033[H\033[2J")
 			return ShowConfigMapsView()
 		case "secrets":
-			fmt.Print("\033[H\033[2J")
 			return ShowSecretsView()
 		}
 	}

@@ -45,7 +45,7 @@ func ShowSecretsView() error {
 		spinner: components.NewSpinner("Loading Secrets..."),
 	}
 
-	p := tea.NewProgram(model, tea.WithAltScreen())
+	p := tea.NewProgram(model)
 	if _, err := p.Run(); err != nil {
 		return err
 	}
@@ -245,11 +245,12 @@ func (m *SecretsViewModel) viewSecretDetails(id string) tea.Cmd {
 		namespace := parts[0]
 		name := parts[1]
 		
-		// TODO: Implement Secret details view
-		fmt.Printf("\nSecret: %s (namespace: %s)\n", name, namespace)
-		fmt.Println("Secret details view coming soon...")
-		fmt.Println("\nPress Enter to continue...")
-		fmt.Scanln()
+		// Show secret details view
+		model := NewSecretDetailsModel(namespace, name)
+		p := tea.NewProgram(model)
+		if _, err := p.Run(); err != nil {
+			return components.ErrorMsg{Error: err}
+		}
 		
 		return nil
 	}

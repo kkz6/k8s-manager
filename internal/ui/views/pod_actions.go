@@ -131,7 +131,7 @@ func ShowPodActionsView(namespace, name string) (tea.Model, tea.Cmd) {
 		case "delete":
 			item.Action = model.deletePod
 		case "back":
-			item.Action = func() tea.Cmd { return tea.Quit }
+			item.Action = func() tea.Cmd { return Navigate(ViewPods, nil) }
 		}
 	}
 
