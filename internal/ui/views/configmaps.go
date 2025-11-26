@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/karthickk/k8s-manager/internal/services"
 	"github.com/karthickk/k8s-manager/internal/ui/components"
 	corev1 "k8s.io/api/core/v1"
@@ -16,13 +16,12 @@ import (
 
 // ConfigMapsViewModel represents the configmaps list view
 type ConfigMapsViewModel struct {
-	client       *services.K8sClient
-	configMaps   []corev1.ConfigMap
-	menu         *components.Menu
-	loading      bool
-	spinner      components.SpinnerModel
-	err          error
-	quitting     bool
+	client        *services.K8sClient
+	configMaps    []corev1.ConfigMap
+	table         *components.Table
+	loading       bool
+	err           error
+	quitting      bool
 	allNamespaces bool
 }
 
@@ -42,10 +41,9 @@ func ShowConfigMapsView() error {
 	model := &ConfigMapsViewModel{
 		client:  client,
 		loading: true,
-		spinner: components.NewSpinner("Loading ConfigMaps..."),
 	}
 
-	p := tea.NewProgram(model)
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return err
 	}
@@ -55,31 +53,42 @@ func ShowConfigMapsView() error {
 
 // Init initializes the model
 func (m *ConfigMapsViewModel) Init() tea.Cmd {
-	return tea.Batch(
-		m.spinner.Init(),
-		m.fetchConfigMaps,
-	)
+	return m.fetchConfigMaps
 }
 
 // Update handles messages
 func (m *ConfigMapsViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.loading {
+			return m, nil
+		}
+
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
+		case "q", "b", "esc":
+			return m, Navigate(ViewConfigsMenu, nil)
 		case "r":
 			m.loading = true
 			return m, m.fetchConfigMaps
-		case "n":
-			// Toggle namespace view
-			m.allNamespaces = !m.allNamespaces
-			m.loading = true
-			return m, m.fetchConfigMaps
-		case "b":
-			// Quick back navigation
-			return m, tea.Quit
+		case "enter", " ":
+			if m.table != nil {
+				selected := m.table.GetSelected()
+				if len(selected) >= 2 {
+					namespace := services.GetCurrentNamespace()
+					name := selected[0]
+					if m.allNamespaces && len(selected) > 0 {
+						namespace = selected[0]
+						name = selected[1]
+					}
+					return m, Navigate(ViewConfigMapDetail, map[string]string{
+						"namespace": namespace,
+						"name":      name,
+					})
+				}
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -89,40 +98,16 @@ func (m *ConfigMapsViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.configMaps = msg.configMaps
 		m.err = msg.err
-		if m.err == nil {
-			m.updateMenu()
+		if m.err == nil && len(m.configMaps) > 0 {
+			m.table = m.createTable()
 		}
 		return m, nil
-
-	case spinner.TickMsg:
-		if m.loading {
-			var cmd tea.Cmd
-			m.spinner, cmd = m.spinner.Update(msg)
-			return m, cmd
-		}
 	}
 
-	// Update menu
-	if !m.loading && m.menu != nil {
-		var cmd tea.Cmd
-		// Check if enter was pressed
-		if kMsg, ok := msg.(tea.KeyMsg); ok && (kMsg.String() == "enter" || kMsg.String() == " ") {
-			selected := m.menu.GetSelected()
-			if selected != nil {
-				if selected.ID == "back" {
-					m.quitting = true
-					return m, tea.Quit
-				} else {
-					// View ConfigMap details
-					return m, m.viewConfigMapDetails(selected.ID)
-				}
-			}
-		}
-		
-		newMenu, cmd := m.menu.Update(msg)
-		if menu, ok := newMenu.(components.Menu); ok {
-			m.menu = &menu
-		}
+	// Update table
+	if m.table != nil && !m.loading {
+		newTable, cmd := m.table.Update(msg)
+		m.table = newTable.(*components.Table)
 		return m, cmd
 	}
 
@@ -136,24 +121,101 @@ func (m *ConfigMapsViewModel) View() string {
 	}
 
 	if m.loading {
-		loadingView := components.NewLoadingScreen("Loading ConfigMaps")
-		return loadingView.View()
+		loadingStyle := components.InfoMessageStyle.Copy().
+			Padding(2, 4)
+		return "\n" + loadingStyle.Render("⏳ Loading ConfigMaps...") + "\n\n"
 	}
 
 	if m.err != nil {
-		return components.BoxStyle.Render(
-			components.RenderTitle("ConfigMaps", "") + "\n\n" +
-				components.RenderMessage("error", m.err.Error()) + "\n\n" +
-				components.HelpStyle.Render("Press 'r' to retry, 'q' to quit"),
-		)
+		errorMsg := components.RenderMessage("error", m.err.Error())
+		helpText := "Press 'r' to refresh • Press 'q/b/esc' to go back • Press 'ctrl+c' to quit"
+
+		containerStyle := lipgloss.NewStyle().Padding(1, 2)
+		return "\n" + containerStyle.Render(errorMsg+"\n\n"+components.HelpStyle.Render(helpText)) + "\n"
 	}
 
-	// Show menu
-	if m.menu == nil {
-		return "No ConfigMaps available"
+	if len(m.configMaps) == 0 {
+		emptyStyle := components.DescriptionStyle.Copy().
+			Padding(2, 4)
+		helpStyle := components.HelpStyle.Copy().
+			Padding(1, 2)
+		return "\n" + emptyStyle.Render("No ConfigMaps found") + "\n" +
+			helpStyle.Render("Press 'r' to refresh • Press 'q' to back") + "\n"
 	}
-	
-	return m.menu.View()
+
+	var b strings.Builder
+
+	// Table
+	b.WriteString("\n")
+	b.WriteString(m.table.View())
+	b.WriteString("\n\n")
+
+	// Help footer
+	helpStyle := components.HelpStyle.Copy().
+		Foreground(components.ColorMuted).
+		Padding(1, 2)
+
+	helpText := components.RenderKeyBinding("↑/↓/j/k", "navigate") + " • " +
+		components.RenderKeyBinding("enter", "view details") + " • " +
+		components.RenderKeyBinding("r", "refresh") + " • " +
+		components.RenderKeyBinding("q", "back")
+
+	b.WriteString(helpStyle.Render(helpText))
+	b.WriteString("\n")
+
+	return b.String()
+}
+
+// createTable creates a table from the configmaps
+func (m *ConfigMapsViewModel) createTable() *components.Table {
+	var columns []components.TableColumn
+	var rows []components.TableRow
+
+	if m.allNamespaces {
+		columns = []components.TableColumn{
+			{Title: "Namespace", Width: 25, Align: "left"},
+			{Title: "Name", Width: 40, Align: "left"},
+			{Title: "Keys", Width: 10, Align: "center"},
+			{Title: "Age", Width: 10, Align: "right"},
+		}
+		for _, cm := range m.configMaps {
+			keys := fmt.Sprintf("%d", len(cm.Data))
+			age := services.FormatAge(cm.CreationTimestamp.Time)
+
+			rows = append(rows, components.TableRow{
+				cm.Namespace,
+				cm.Name,
+				keys,
+				age,
+			})
+		}
+	} else {
+		columns = []components.TableColumn{
+			{Title: "Name", Width: 50, Align: "left"},
+			{Title: "Keys", Width: 10, Align: "center"},
+			{Title: "Age", Width: 10, Align: "right"},
+		}
+		for _, cm := range m.configMaps {
+			keys := fmt.Sprintf("%d", len(cm.Data))
+			age := services.FormatAge(cm.CreationTimestamp.Time)
+
+			rows = append(rows, components.TableRow{
+				cm.Name,
+				keys,
+				age,
+			})
+		}
+	}
+
+	namespace := services.GetCurrentNamespace()
+	title := fmt.Sprintf("ConfigMaps (%s)", namespace)
+	if m.allNamespaces {
+		title = "ConfigMaps (All Namespaces)"
+	}
+
+	table := components.NewTable(title, columns)
+	table.SetRows(rows)
+	return table
 }
 
 // fetchConfigMaps fetches the configmaps list
@@ -176,66 +238,15 @@ func (m *ConfigMapsViewModel) fetchConfigMaps() tea.Msg {
 	return configMapsFetchedMsg{configMaps: configMaps.Items}
 }
 
-// updateMenu updates the menu with configmap data
-func (m *ConfigMapsViewModel) updateMenu() {
-	menuItems := []components.MenuItem{}
-	
-	// Create menu items for each configmap
-	for _, cm := range m.configMaps {
-		age := services.FormatAge(cm.CreationTimestamp.Time)
-		
-		// Create a formatted title with configmap info
-		title := cm.Name
-		description := fmt.Sprintf("Keys: %d, Namespace: %s, Age: %s", 
-			len(cm.Data), cm.Namespace, age)
-		
-		menuItems = append(menuItems, components.MenuItem{
-			ID:          fmt.Sprintf("%s/%s", cm.Namespace, cm.Name),
-			Title:       title,
-			Description: description,
-			Icon:        "📋",
-		})
+// NewConfigMapsViewModelSimple creates a simple configmaps view model for navigation
+func NewConfigMapsViewModelSimple() tea.Model {
+	client, err := services.GetK8sClient()
+	if err != nil {
+		return &ConfigMapsViewModel{err: err}
 	}
-	
-	// Add back option
-	menuItems = append(menuItems, components.MenuItem{
-		ID:          "back",
-		Title:       "Back to Main Menu",
-		Description: "Return to the main menu",
-		Icon:        "⬅️",
-		Shortcut:    "b",
-	})
-	
-	// Create title based on namespace
-	title := fmt.Sprintf("📋 ConfigMaps (%d items)", len(m.configMaps))
-	if m.allNamespaces {
-		title += " - All Namespaces"
-	} else {
-		title += fmt.Sprintf(" - Namespace: %s", services.GetCurrentNamespace())
-	}
-	
-	// Create menu with DevTools style
-	m.menu = components.NewDevToolsMenu(title, menuItems)
-}
 
-// viewConfigMapDetails shows configmap details
-func (m *ConfigMapsViewModel) viewConfigMapDetails(id string) tea.Cmd {
-	return func() tea.Msg {
-		parts := strings.Split(id, "/")
-		if len(parts) != 2 {
-			return nil
-		}
-		
-		namespace := parts[0]
-		name := parts[1]
-		
-		// Show configmap details view
-		model := NewConfigMapDetailsModel(namespace, name)
-		p := tea.NewProgram(model)
-		if _, err := p.Run(); err != nil {
-			return components.ErrorMsg{Error: err}
-		}
-		
-		return nil
+	return &ConfigMapsViewModel{
+		client:  client,
+		loading: true,
 	}
 }

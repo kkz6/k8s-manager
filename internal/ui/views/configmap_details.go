@@ -3,6 +3,7 @@ package views
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,7 +21,7 @@ type ConfigMapDetailsModel struct {
 	namespace    string
 	name         string
 	configMap    *corev1.ConfigMap
-	listView     *components.ListView
+	table        *components.Table
 	viewport     viewport.Model
 	viewMode     string // "list" or "detail"
 	selectedKey  string
@@ -74,6 +75,10 @@ func (m *ConfigMapDetailsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.KeyMsg:
+		if m.loading {
+			return m, nil
+		}
+
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
@@ -88,13 +93,22 @@ func (m *ConfigMapDetailsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, Navigate(ViewConfigMaps, nil)
 		case "b":
 			// Quick back navigation
+			if m.viewMode == "detail" {
+				m.viewMode = "list"
+				m.ready = false
+				return m, nil
+			}
 			return m, Navigate(ViewConfigMaps, nil)
 		case "e":
-			if m.viewMode == "list" && m.listView != nil {
-				selected := m.listView.GetSelected()
-				if selected != nil {
-					// TODO: Edit ConfigMap key
-					return m, nil
+			if m.viewMode == "list" && m.table != nil {
+				selected := m.table.GetSelected()
+				if len(selected) > 0 {
+					// Navigate to edit key view
+					return m, Navigate(ViewEditConfigMapKey, map[string]string{
+						"namespace": m.namespace,
+						"name":      m.name,
+						"key":       selected[0],
+					})
 				}
 			}
 		case "a":
@@ -105,20 +119,12 @@ func (m *ConfigMapDetailsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					"name":      m.name,
 				})
 			}
-		case "d":
-			if m.viewMode == "list" && m.listView != nil {
-				selected := m.listView.GetSelected()
-				if selected != nil {
-					// TODO: Delete ConfigMap key
-					return m, nil
-				}
-			}
 		case "enter", " ":
-			if m.viewMode == "list" && m.listView != nil {
-				selected := m.listView.GetSelected()
-				if selected != nil {
+			if m.viewMode == "list" && m.table != nil {
+				selected := m.table.GetSelected()
+				if len(selected) > 0 {
 					// View specific key
-					m.selectedKey = selected.ID
+					m.selectedKey = selected[0]
 					m.viewMode = "detail"
 					return m, tea.WindowSize()
 				}
@@ -137,17 +143,15 @@ func (m *ConfigMapDetailsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.errorMsg = msg.err.Error()
 		} else {
 			m.configMap = msg.configMap
-			m.updateListView()
+			m.updateTable()
 		}
 		return m, nil
 	}
 
-	// Update list or viewport based on mode
-	if m.viewMode == "list" && m.listView != nil && !m.loading {
-		newList, cmd := m.listView.Update(msg)
-		if list, ok := newList.(components.ListView); ok {
-			m.listView = &list
-		}
+	// Update table in list mode
+	if m.viewMode == "list" && m.table != nil && !m.loading {
+		newTable, cmd := m.table.Update(msg)
+		m.table = newTable.(*components.Table)
 		return m, cmd
 	} else if m.viewMode == "detail" && m.viewport.Height > 0 {
 		m.viewport, cmd = m.viewport.Update(msg)
@@ -164,15 +168,18 @@ func (m *ConfigMapDetailsModel) View() string {
 	}
 
 	if m.loading {
-		return components.NewLoadingScreen("Loading ConfigMap Details").View()
+		loadingStyle := components.InfoMessageStyle.Copy().
+			Padding(2, 4)
+		return "\n" + loadingStyle.Render("⏳ Loading ConfigMap...") + "\n\n"
 	}
 
 	if m.errorMsg != "" {
-		return components.BoxStyle.Render(
-			components.RenderTitle("ConfigMap Details", "") + "\n\n" +
-				components.RenderMessage("error", m.errorMsg) + "\n\n" +
-				components.HelpStyle.Render("Press 'q' to quit"),
-		)
+		errorStyle := components.ErrorMessageStyle.Copy().
+			Padding(1, 2)
+		helpStyle := components.HelpStyle.Copy().
+			Padding(1, 2)
+		return "\n" + errorStyle.Render(fmt.Sprintf("✗ Error: %s", m.errorMsg)) + "\n" +
+			helpStyle.Render("Press 'q' to back") + "\n"
 	}
 
 	if m.viewMode == "detail" {
@@ -180,11 +187,33 @@ func (m *ConfigMapDetailsModel) View() string {
 	}
 
 	// List view
-	if m.listView == nil {
-		return "No configmap data available"
+	if m.table == nil {
+		emptyStyle := components.DescriptionStyle.Copy().
+			Padding(2, 4)
+		return "\n" + emptyStyle.Render("No configmap data available") + "\n"
 	}
 
-	return m.listView.View()
+	var b strings.Builder
+
+	b.WriteString("\n")
+	b.WriteString(m.table.View())
+	b.WriteString("\n\n")
+
+	// Help footer
+	helpStyle := components.HelpStyle.Copy().
+		Foreground(components.ColorMuted).
+		Padding(1, 2)
+
+	helpText := components.RenderKeyBinding("↑/↓/j/k", "navigate") + " • " +
+		components.RenderKeyBinding("enter", "view value") + " • " +
+		components.RenderKeyBinding("e", "edit") + " • " +
+		components.RenderKeyBinding("a", "add") + " • " +
+		components.RenderKeyBinding("q", "back")
+
+	b.WriteString(helpStyle.Render(helpText))
+	b.WriteString("\n")
+
+	return b.String()
 }
 
 // renderDetailView renders the detail view for a specific key
@@ -193,51 +222,78 @@ func (m *ConfigMapDetailsModel) renderDetailView() string {
 		return "\n  Initializing..."
 	}
 
+	var b strings.Builder
+
 	// Title
-	title := fmt.Sprintf("📋 ConfigMap: %s / Key: %s", m.name, m.selectedKey)
-	header := components.TitleStyle.Render(title)
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(components.ColorPrimary).
+		Padding(0, 1)
+	title := fmt.Sprintf("📋 %s / %s", m.name, m.selectedKey)
+	b.WriteString(titleStyle.Render(title))
+	b.WriteString("\n\n")
+
+	// Viewport
+	b.WriteString(m.viewport.View())
+	b.WriteString("\n\n")
 
 	// Footer
-	footerText := "q/esc: back to keys • ↑/↓: scroll"
-	footer := components.HelpStyle.Render(footerText)
+	helpStyle := components.HelpStyle.Copy().
+		Foreground(components.ColorMuted).
+		Padding(1, 2)
+	footerText := components.RenderKeyBinding("↑/↓", "scroll") + " • " +
+		components.RenderKeyBinding("q/esc/b", "back to keys")
+	b.WriteString(helpStyle.Render(footerText))
 
-	return fmt.Sprintf("%s\n\n%s\n\n%s", header, m.viewport.View(), footer)
+	return b.String()
 }
 
-// updateListView updates the list with configmap keys
-func (m *ConfigMapDetailsModel) updateListView() {
+// updateTable updates the table with configmap keys
+func (m *ConfigMapDetailsModel) updateTable() {
 	if m.configMap == nil {
 		return
 	}
 
-	listItems := []components.ListItem{}
+	// Sort keys for consistent display
+	keys := make([]string, 0, len(m.configMap.Data))
+	for key := range m.configMap.Data {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
 
-	// Add configmap keys
-	for key, value := range m.configMap.Data {
+	// Create table
+	columns := []components.TableColumn{
+		{Title: "Key", Width: 50, Align: "left"},
+		{Title: "Lines", Width: 10, Align: "center"},
+		{Title: "Size", Width: 15, Align: "right"},
+		{Title: "Preview", Width: 40, Align: "left"},
+	}
+
+	rows := []components.TableRow{}
+	for _, key := range keys {
+		value := m.configMap.Data[key]
 		lines := strings.Count(value, "\n") + 1
-		size := len(value)
-		description := fmt.Sprintf("Lines: %d, Size: %d bytes", lines, size)
-		
-		// Add preview if small enough
-		if size <= 50 {
-			preview := strings.ReplaceAll(value, "\n", "\\n")
-			if len(preview) > 30 {
-				preview = preview[:27] + "..."
-			}
-			description += fmt.Sprintf(" | %s", preview)
+		size := formatSize(len(value))
+
+		// Create preview
+		preview := strings.ReplaceAll(value, "\n", " ")
+		preview = strings.ReplaceAll(preview, "\t", " ")
+		preview = strings.TrimSpace(preview)
+		if len(preview) > 40 {
+			preview = preview[:37] + "..."
 		}
 
-		listItems = append(listItems, components.ListItem{
-			ID:          key,
-			Title:       key,
-			Description: description,
-			Icon:        "📄",
+		rows = append(rows, components.TableRow{
+			key,
+			fmt.Sprintf("%d", lines),
+			size,
+			preview,
 		})
 	}
 
-	title := fmt.Sprintf("📋 ConfigMap: %s", m.name)
-	m.listView = components.NewListView(title, listItems)
-	m.listView.SetHelpText("enter: view key • a: add key • e: edit • d: delete • esc/b: back • ctrl+c: quit")
+	title := fmt.Sprintf("ConfigMap: %s (%s)", m.name, m.namespace)
+	m.table = components.NewTable(title, columns)
+	m.table.SetRows(rows)
 }
 
 // updateViewport updates the viewport with the selected key's content
@@ -270,7 +326,7 @@ func (m *ConfigMapDetailsModel) updateViewport() {
 
 	// Add some styling
 	styledContent := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("86")).
+		Foreground(lipgloss.Color("252")).
 		Render(content)
 
 	m.viewport.SetContent(styledContent)
@@ -296,17 +352,26 @@ func (m *ConfigMapDetailsModel) loadConfigMap() tea.Msg {
 
 // Helper functions
 
+func formatSize(bytes int) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d bytes", bytes)
+	} else if bytes < 1024*1024 {
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+	}
+	return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
+}
+
 func formatProperties(props string) string {
 	lines := strings.Split(props, "\n")
 	var formatted []string
-	
+
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			formatted = append(formatted, line)
 			continue
 		}
-		
+
 		// Add spacing around = for readability
 		if idx := strings.Index(line, "="); idx > 0 {
 			key := strings.TrimSpace(line[:idx])
@@ -316,7 +381,7 @@ func formatProperties(props string) string {
 			formatted = append(formatted, line)
 		}
 	}
-	
+
 	return strings.Join(formatted, "\n")
 }
 

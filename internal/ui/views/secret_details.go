@@ -38,6 +38,11 @@ type secretLoadedMsg struct {
 	err    error
 }
 
+// secretKeyDeletedMsg is sent when a secret key is deleted
+type secretKeyDeletedMsg struct {
+	err error
+}
+
 // NewSecretDetailsModel creates a new secret details view
 func NewSecretDetailsModel(namespace, name string) *SecretDetailsModel {
 	return &SecretDetailsModel{
@@ -96,8 +101,12 @@ func (m *SecretDetailsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.viewMode == "list" && m.listView != nil {
 				selected := m.listView.GetSelected()
 				if selected != nil {
-					// TODO: Edit Secret key
-					return m, nil
+					// Navigate to edit key view
+					return m, Navigate(ViewEditSecretKey, map[string]string{
+						"namespace": m.namespace,
+						"name":      m.name,
+						"key":       selected.ID,
+					})
 				}
 			}
 		case "a":
@@ -112,8 +121,9 @@ func (m *SecretDetailsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.viewMode == "list" && m.listView != nil {
 				selected := m.listView.GetSelected()
 				if selected != nil {
-					// TODO: Delete Secret key
-					return m, nil
+					// Delete Secret key
+					m.loading = true
+					return m, m.deleteSecretKey(selected.ID)
 				}
 			}
 		case "d":
@@ -148,6 +158,16 @@ func (m *SecretDetailsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.secret = msg.secret
 			m.updateListView()
+		}
+		return m, nil
+
+	case secretKeyDeletedMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.errorMsg = msg.err.Error()
+		} else {
+			// Reload the secret to show updated data
+			return m, m.loadSecret
 		}
 		return m, nil
 	}
@@ -330,6 +350,38 @@ func (m *SecretDetailsModel) loadSecret() tea.Msg {
 	}
 
 	return secretLoadedMsg{secret: secret}
+}
+
+// deleteSecretKey deletes a key from the secret
+func (m *SecretDetailsModel) deleteSecretKey(key string) tea.Cmd {
+	return func() tea.Msg {
+		if m.secret == nil {
+			return secretKeyDeletedMsg{err: fmt.Errorf("no secret loaded")}
+		}
+
+		client, err := services.GetK8sClient()
+		if err != nil {
+			return secretKeyDeletedMsg{err: err}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		// Remove the key from the secret data
+		if _, exists := m.secret.Data[key]; !exists {
+			return secretKeyDeletedMsg{err: fmt.Errorf("key '%s' not found in secret", key)}
+		}
+
+		delete(m.secret.Data, key)
+
+		// Update the secret
+		_, err = client.Clientset.CoreV1().Secrets(m.namespace).Update(ctx, m.secret, metav1.UpdateOptions{})
+		if err != nil {
+			return secretKeyDeletedMsg{err: fmt.Errorf("failed to delete key: %w", err)}
+		}
+
+		return secretKeyDeletedMsg{err: nil}
+	}
 }
 
 // Helper functions

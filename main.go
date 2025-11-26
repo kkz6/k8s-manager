@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/karthickk/k8s-manager/internal/commands"
+	"github.com/karthickk/k8s-manager/internal/commands/deployments"
 	"github.com/karthickk/k8s-manager/internal/commands/pods"
 	"github.com/karthickk/k8s-manager/internal/ui/views"
 	"github.com/spf13/cobra"
@@ -22,10 +23,13 @@ func main() {
 func registerCommands() {
 	// Pod management
 	commands.AddCommand(pods.NewPodsCmd())
-	
+
+	// Deployment management
+	commands.AddCommand(deployments.NewDeploymentsCmd())
+
 	// TODO: Add more commands as they are implemented
 	// commands.AddCommand(secrets.NewSecretsCmd())
-	// commands.AddCommand(configmaps.NewConfigMapsCmd()) 
+	// commands.AddCommand(configmaps.NewConfigMapsCmd())
 	// commands.AddCommand(namespaces.NewNamespacesCmd())
 
 	// Interactive mode command

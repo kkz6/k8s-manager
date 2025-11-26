@@ -151,12 +151,12 @@ func (m *PodActionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
-		case "b":
-			// Quick back navigation
-			return m, tea.Quit
+		case "q", "b", "esc":
+			// Navigate back to pods list
+			return m, Navigate(ViewPods, nil)
 		}
 
 		// Handle menu selection by ID
@@ -283,7 +283,7 @@ func (m *PodActionsModel) handleAction(actionID string) (tea.Model, tea.Cmd) {
 		m.currentAction = "Delete Pod"
 		return m, m.deletePod()
 	case "back":
-		return m, tea.Quit
+		return m, Navigate(ViewPods, nil)
 	}
 	return m, nil
 }

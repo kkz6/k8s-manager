@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/karthickk/k8s-manager/internal/services"
 	"github.com/karthickk/k8s-manager/internal/ui/components"
 	corev1 "k8s.io/api/core/v1"
@@ -16,13 +16,12 @@ import (
 
 // SecretsViewModel represents the secrets list view
 type SecretsViewModel struct {
-	client       *services.K8sClient
-	secrets      []corev1.Secret
-	menu         *components.Menu
-	loading      bool
-	spinner      components.SpinnerModel
-	err          error
-	quitting     bool
+	client        *services.K8sClient
+	secrets       []corev1.Secret
+	table         *components.Table
+	loading       bool
+	err           error
+	quitting      bool
 	allNamespaces bool
 }
 
@@ -42,10 +41,9 @@ func ShowSecretsView() error {
 	model := &SecretsViewModel{
 		client:  client,
 		loading: true,
-		spinner: components.NewSpinner("Loading Secrets..."),
 	}
 
-	p := tea.NewProgram(model)
+	p := tea.NewProgram(model, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		return err
 	}
@@ -55,31 +53,42 @@ func ShowSecretsView() error {
 
 // Init initializes the model
 func (m *SecretsViewModel) Init() tea.Cmd {
-	return tea.Batch(
-		m.spinner.Init(),
-		m.fetchSecrets,
-	)
+	return m.fetchSecrets
 }
 
 // Update handles messages
 func (m *SecretsViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		if m.loading {
+			return m, nil
+		}
+
 		switch msg.String() {
-		case "ctrl+c", "q":
+		case "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
+		case "q", "b", "esc":
+			return m, Navigate(ViewConfigsMenu, nil)
 		case "r":
 			m.loading = true
 			return m, m.fetchSecrets
-		case "n":
-			// Toggle namespace view
-			m.allNamespaces = !m.allNamespaces
-			m.loading = true
-			return m, m.fetchSecrets
-		case "b":
-			// Quick back navigation
-			return m, tea.Quit
+		case "enter", " ":
+			if m.table != nil {
+				selected := m.table.GetSelected()
+				if len(selected) >= 2 {
+					namespace := services.GetCurrentNamespace()
+					name := selected[0]
+					if m.allNamespaces && len(selected) > 0 {
+						namespace = selected[0]
+						name = selected[1]
+					}
+					return m, Navigate(ViewSecretDetail, map[string]string{
+						"namespace": namespace,
+						"name":      name,
+					})
+				}
+			}
 		}
 
 	case tea.WindowSizeMsg:
@@ -89,40 +98,16 @@ func (m *SecretsViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.secrets = msg.secrets
 		m.err = msg.err
-		if m.err == nil {
-			m.updateMenu()
+		if m.err == nil && len(m.secrets) > 0 {
+			m.table = m.createTable()
 		}
 		return m, nil
-
-	case spinner.TickMsg:
-		if m.loading {
-			var cmd tea.Cmd
-			m.spinner, cmd = m.spinner.Update(msg)
-			return m, cmd
-		}
 	}
 
-	// Update menu
-	if !m.loading && m.menu != nil {
-		var cmd tea.Cmd
-		// Check if enter was pressed
-		if kMsg, ok := msg.(tea.KeyMsg); ok && (kMsg.String() == "enter" || kMsg.String() == " ") {
-			selected := m.menu.GetSelected()
-			if selected != nil {
-				if selected.ID == "back" {
-					m.quitting = true
-					return m, tea.Quit
-				} else {
-					// View Secret details
-					return m, m.viewSecretDetails(selected.ID)
-				}
-			}
-		}
-		
-		newMenu, cmd := m.menu.Update(msg)
-		if menu, ok := newMenu.(components.Menu); ok {
-			m.menu = &menu
-		}
+	// Update table
+	if m.table != nil && !m.loading {
+		newTable, cmd := m.table.Update(msg)
+		m.table = newTable.(*components.Table)
 		return m, cmd
 	}
 
@@ -136,24 +121,113 @@ func (m *SecretsViewModel) View() string {
 	}
 
 	if m.loading {
-		loadingView := components.NewLoadingScreen("Loading Secrets")
-		return loadingView.View()
+		loadingStyle := components.InfoMessageStyle.Copy().
+			Padding(2, 4)
+		return "\n" + loadingStyle.Render("⏳ Loading Secrets...") + "\n\n"
 	}
 
 	if m.err != nil {
-		return components.BoxStyle.Render(
-			components.RenderTitle("Secrets", "") + "\n\n" +
-				components.RenderMessage("error", m.err.Error()) + "\n\n" +
-				components.HelpStyle.Render("Press 'r' to retry, 'q' to quit"),
-		)
+		errorMsg := components.RenderMessage("error", m.err.Error())
+		helpText := "Press 'r' to refresh • Press 'q/b/esc' to go back • Press 'ctrl+c' to quit"
+
+		containerStyle := lipgloss.NewStyle().Padding(1, 2)
+		return "\n" + containerStyle.Render(errorMsg+"\n\n"+components.HelpStyle.Render(helpText)) + "\n"
 	}
 
-	// Show menu
-	if m.menu == nil {
-		return "No Secrets available"
+	if len(m.secrets) == 0 {
+		emptyStyle := components.DescriptionStyle.Copy().
+			Padding(2, 4)
+		helpStyle := components.HelpStyle.Copy().
+			Padding(1, 2)
+		return "\n" + emptyStyle.Render("No Secrets found") + "\n" +
+			helpStyle.Render("Press 'r' to refresh • Press 'q' to back") + "\n"
 	}
-	
-	return m.menu.View()
+
+	var b strings.Builder
+
+	// Table
+	b.WriteString("\n")
+	b.WriteString(m.table.View())
+	b.WriteString("\n\n")
+
+	// Help footer
+	helpStyle := components.HelpStyle.Copy().
+		Foreground(components.ColorMuted).
+		Padding(1, 2)
+
+	helpText := components.RenderKeyBinding("↑/↓/j/k", "navigate") + " • " +
+		components.RenderKeyBinding("enter", "view details") + " • " +
+		components.RenderKeyBinding("r", "refresh") + " • " +
+		components.RenderKeyBinding("q", "back")
+
+	b.WriteString(helpStyle.Render(helpText))
+	b.WriteString("\n")
+
+	return b.String()
+}
+
+// createTable creates a table from the secrets
+func (m *SecretsViewModel) createTable() *components.Table {
+	var columns []components.TableColumn
+	var rows []components.TableRow
+
+	if m.allNamespaces {
+		columns = []components.TableColumn{
+			{Title: "Namespace", Width: 25, Align: "left"},
+			{Title: "Name", Width: 40, Align: "left"},
+			{Title: "Type", Width: 25, Align: "left"},
+			{Title: "Keys", Width: 10, Align: "center"},
+			{Title: "Age", Width: 10, Align: "right"},
+		}
+		for _, secret := range m.secrets {
+			keys := fmt.Sprintf("%d", len(secret.Data))
+			age := services.FormatAge(secret.CreationTimestamp.Time)
+			secretType := string(secret.Type)
+			if len(secretType) > 25 {
+				secretType = secretType[:22] + "..."
+			}
+
+			rows = append(rows, components.TableRow{
+				secret.Namespace,
+				secret.Name,
+				secretType,
+				keys,
+				age,
+			})
+		}
+	} else {
+		columns = []components.TableColumn{
+			{Title: "Name", Width: 45, Align: "left"},
+			{Title: "Type", Width: 30, Align: "left"},
+			{Title: "Keys", Width: 10, Align: "center"},
+			{Title: "Age", Width: 10, Align: "right"},
+		}
+		for _, secret := range m.secrets {
+			keys := fmt.Sprintf("%d", len(secret.Data))
+			age := services.FormatAge(secret.CreationTimestamp.Time)
+			secretType := string(secret.Type)
+			if len(secretType) > 30 {
+				secretType = secretType[:27] + "..."
+			}
+
+			rows = append(rows, components.TableRow{
+				secret.Name,
+				secretType,
+				keys,
+				age,
+			})
+		}
+	}
+
+	namespace := services.GetCurrentNamespace()
+	title := fmt.Sprintf("Secrets (%s)", namespace)
+	if m.allNamespaces {
+		title = "Secrets (All Namespaces)"
+	}
+
+	table := components.NewTable(title, columns)
+	table.SetRows(rows)
+	return table
 }
 
 // fetchSecrets fetches the secrets list
@@ -176,82 +250,15 @@ func (m *SecretsViewModel) fetchSecrets() tea.Msg {
 	return secretsFetchedMsg{secrets: secrets.Items}
 }
 
-// updateMenu updates the menu with secret data
-func (m *SecretsViewModel) updateMenu() {
-	menuItems := []components.MenuItem{}
-	
-	// Create menu items for each secret
-	for _, secret := range m.secrets {
-		age := services.FormatAge(secret.CreationTimestamp.Time)
-		
-		// Get secret type display
-		secretType := string(secret.Type)
-		if secretType == string(corev1.SecretTypeOpaque) {
-			secretType = "Opaque"
-		}
-		
-		// Create a formatted title with secret info
-		title := secret.Name
-		description := fmt.Sprintf("Type: %s, Keys: %d, Namespace: %s, Age: %s", 
-			secretType, len(secret.Data), secret.Namespace, age)
-		
-		// Choose icon based on secret type
-		icon := "🔐"
-		if strings.Contains(string(secret.Type), "tls") {
-			icon = "🔒"
-		} else if strings.Contains(string(secret.Type), "docker") {
-			icon = "🐳"
-		} else if strings.Contains(string(secret.Type), "service-account") {
-			icon = "👤"
-		}
-		
-		menuItems = append(menuItems, components.MenuItem{
-			ID:          fmt.Sprintf("%s/%s", secret.Namespace, secret.Name),
-			Title:       title,
-			Description: description,
-			Icon:        icon,
-		})
+// NewSecretsViewModelSimple creates a simple secrets view model for navigation
+func NewSecretsViewModelSimple() tea.Model {
+	client, err := services.GetK8sClient()
+	if err != nil {
+		return &SecretsViewModel{err: err}
 	}
-	
-	// Add back option
-	menuItems = append(menuItems, components.MenuItem{
-		ID:          "back",
-		Title:       "Back to Main Menu",
-		Description: "Return to the main menu",
-		Icon:        "⬅️",
-		Shortcut:    "b",
-	})
-	
-	// Create title based on namespace
-	title := fmt.Sprintf("🔐 Secrets (%d items)", len(m.secrets))
-	if m.allNamespaces {
-		title += " - All Namespaces"
-	} else {
-		title += fmt.Sprintf(" - Namespace: %s", services.GetCurrentNamespace())
-	}
-	
-	// Create menu with DevTools style
-	m.menu = components.NewDevToolsMenu(title, menuItems)
-}
 
-// viewSecretDetails shows secret details
-func (m *SecretsViewModel) viewSecretDetails(id string) tea.Cmd {
-	return func() tea.Msg {
-		parts := strings.Split(id, "/")
-		if len(parts) != 2 {
-			return nil
-		}
-		
-		namespace := parts[0]
-		name := parts[1]
-		
-		// Show secret details view
-		model := NewSecretDetailsModel(namespace, name)
-		p := tea.NewProgram(model)
-		if _, err := p.Run(); err != nil {
-			return components.ErrorMsg{Error: err}
-		}
-		
-		return nil
+	return &SecretsViewModel{
+		client:  client,
+		loading: true,
 	}
 }

@@ -279,3 +279,13 @@ func (f FormModel) GetValues() map[string]string {
 func (f FormModel) IsSubmitted() bool {
 	return f.submitted
 }
+
+// SetFieldValue sets the value of a field by label
+func (f *FormModel) SetFieldValue(label, value string) {
+	for _, field := range f.Fields {
+		if field.Label == label {
+			field.SetValue(value)
+			return
+		}
+	}
+}

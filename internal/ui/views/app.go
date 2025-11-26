@@ -12,18 +12,27 @@ import (
 type View string
 
 const (
-	ViewMainMenu        View = "main_menu"
-	ViewPods            View = "pods"
-	ViewPodActions      View = "pod_actions"
-	ViewConfigsMenu     View = "configs_menu"
-	ViewConfigMaps      View = "configmaps"
-	ViewSecrets         View = "secrets"
-	ViewConfigMapDetail View = "configmap_detail"
-	ViewSecretDetail    View = "secret_detail"
-	ViewLogs            View = "logs"
-	ViewEnvManager      View = "env_manager"
-	ViewAddSecretKey    View = "add_secret_key"
-	ViewAddConfigMapKey View = "add_configmap_key"
+	ViewMainMenu           View = "main_menu"
+	ViewPods               View = "pods"
+	ViewPodActions         View = "pod_actions"
+	ViewDeployments        View = "deployments"
+	ViewDeploymentActions  View = "deployment_actions"
+	ViewConfigsMenu        View = "configs_menu"
+	ViewConfigMaps         View = "configmaps"
+	ViewSecrets            View = "secrets"
+	ViewConfigMapDetail    View = "configmap_detail"
+	ViewSecretDetail       View = "secret_detail"
+	ViewLogs               View = "logs"
+	ViewEnvManager         View = "env_manager"
+	ViewAddSecretKey       View = "add_secret_key"
+	ViewEditSecretKey      View = "edit_secret_key"
+	ViewAddConfigMapKey    View = "add_configmap_key"
+	ViewEditConfigMapKey   View = "edit_configmap_key"
+	ViewServices           View = "services"
+	ViewNamespaces         View = "namespaces"
+	ViewNodes              View = "nodes"
+	ViewConfiguration      View = "configuration"
+	ViewSQLProxy           View = "sql_proxy"
 )
 
 // NavigateMsg is sent to navigate between views
@@ -120,6 +129,19 @@ func (m *AppModel) navigate(nav NavigateMsg) (tea.Model, tea.Cmd) {
 		m.currentModel = model
 		return m, tea.Batch(clearCmd, cmd)
 
+	case ViewDeployments:
+		m.currentView = ViewDeployments
+		m.currentModel = NewDeploymentsViewModelSimple()
+		return m, tea.Batch(clearCmd, m.currentModel.Init())
+
+	case ViewDeploymentActions:
+		namespace := nav.Params["namespace"]
+		name := nav.Params["name"]
+		model, cmd := ShowDeploymentActionsView(namespace, name)
+		m.currentView = ViewDeploymentActions
+		m.currentModel = model
+		return m, tea.Batch(clearCmd, cmd)
+
 	case ViewConfigsMenu:
 		m.currentView = ViewConfigsMenu
 		m.currentModel = NewConfigsMenuModelSimple()
@@ -177,6 +199,47 @@ func (m *AppModel) navigate(nav NavigateMsg) (tea.Model, tea.Cmd) {
 		name := nav.Params["name"]
 		m.currentView = ViewAddConfigMapKey
 		m.currentModel = NewAddConfigMapKeyModel(namespace, name)
+		return m, tea.Batch(clearCmd, m.currentModel.Init())
+
+	case ViewEditSecretKey:
+		namespace := nav.Params["namespace"]
+		name := nav.Params["name"]
+		key := nav.Params["key"]
+		m.currentView = ViewEditSecretKey
+		m.currentModel = NewEditSecretKeyModel(namespace, name, key)
+		return m, tea.Batch(clearCmd, m.currentModel.Init())
+
+	case ViewEditConfigMapKey:
+		namespace := nav.Params["namespace"]
+		name := nav.Params["name"]
+		key := nav.Params["key"]
+		m.currentView = ViewEditConfigMapKey
+		m.currentModel = NewEditConfigMapKeyModel(namespace, name, key)
+		return m, tea.Batch(clearCmd, m.currentModel.Init())
+
+	case ViewServices:
+		m.currentView = ViewServices
+		m.currentModel = NewComingSoonView("Services", "View and manage Kubernetes services")
+		return m, tea.Batch(clearCmd, m.currentModel.Init())
+
+	case ViewNamespaces:
+		m.currentView = ViewNamespaces
+		m.currentModel = NewComingSoonView("Namespaces", "Switch and manage Kubernetes namespaces")
+		return m, tea.Batch(clearCmd, m.currentModel.Init())
+
+	case ViewNodes:
+		m.currentView = ViewNodes
+		m.currentModel = NewComingSoonView("Nodes & Cluster", "View cluster nodes and resource usage")
+		return m, tea.Batch(clearCmd, m.currentModel.Init())
+
+	case ViewConfiguration:
+		m.currentView = ViewConfiguration
+		m.currentModel = NewConfigViewModel()
+		return m, tea.Batch(clearCmd, m.currentModel.Init())
+
+	case ViewSQLProxy:
+		m.currentView = ViewSQLProxy
+		m.currentModel = NewSQLProxyViewModel()
 		return m, tea.Batch(clearCmd, m.currentModel.Init())
 
 	default:
@@ -244,6 +307,13 @@ func createMainMenu() tea.Model {
 			Shortcut:    "l",
 		},
 		{
+			ID:          "sql-proxy",
+			Title:       "Cloud SQL Proxy",
+			Description: "Connect to private Cloud SQL databases via proxy",
+			Icon:        "🗄️",
+			Shortcut:    "x",
+		},
+		{
 			ID:          "config",
 			Title:       "Configuration",
 			Description: "Manage K8s Manager settings and contexts",
@@ -287,8 +357,23 @@ func (m *MainMenuModelSimple) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "p":
 			return m, Navigate(ViewPods, nil)
+		case "d":
+			return m, Navigate(ViewDeployments, nil)
 		case "c":
 			return m, Navigate(ViewConfigsMenu, nil)
+		case "s":
+			return m, Navigate(ViewServices, nil)
+		case "n":
+			return m, Navigate(ViewNamespaces, nil)
+		case "o":
+			return m, Navigate(ViewNodes, nil)
+		case "l":
+			// TODO: Implement logs/events view
+			return m, nil
+		case "x":
+			return m, Navigate(ViewSQLProxy, nil)
+		case "g":
+			return m, Navigate(ViewConfiguration, nil)
 		}
 	}
 
@@ -303,8 +388,23 @@ func (m *MainMenuModelSimple) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch selected.ID {
 				case "pods":
 					return m, Navigate(ViewPods, nil)
+				case "deployments":
+					return m, Navigate(ViewDeployments, nil)
 				case "secrets":
 					return m, Navigate(ViewConfigsMenu, nil)
+				case "services":
+					return m, Navigate(ViewServices, nil)
+				case "namespaces":
+					return m, Navigate(ViewNamespaces, nil)
+				case "nodes":
+					return m, Navigate(ViewNodes, nil)
+				case "logs":
+					// TODO: Implement logs/events view from main menu
+					return m, nil
+				case "sql-proxy":
+					return m, Navigate(ViewSQLProxy, nil)
+				case "config":
+					return m, Navigate(ViewConfiguration, nil)
 				case "quit":
 					m.quitting = true
 					return m, tea.Quit

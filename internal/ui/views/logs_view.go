@@ -33,6 +33,7 @@ type LogsViewModel struct {
 	errorMsg    string
 	logStream   io.ReadCloser
 	logReader   *bufio.Reader
+	returnTo    View // Track where to return to
 }
 
 // NewLogsViewModel creates a new logs view
@@ -89,13 +90,23 @@ func (m *LogsViewModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "esc", "ctrl+c":
+		case "ctrl+c":
 			m.quitting = true
 			m.cancel() // Cancel log streaming
 			if m.logStream != nil {
 				m.logStream.Close()
 			}
 			return m, tea.Quit
+		case "q", "esc", "b":
+			// Navigate back to pod actions
+			m.cancel() // Cancel log streaming
+			if m.logStream != nil {
+				m.logStream.Close()
+			}
+			return m, Navigate(ViewPodActions, map[string]string{
+				"namespace": m.namespace,
+				"name":      m.podName,
+			})
 		case "g", "home":
 			m.viewport.GotoTop()
 		case "G", "end":
@@ -165,9 +176,9 @@ func (m *LogsViewModel) View() string {
 	// Footer with controls
 	var footerText string
 	if m.follow {
-		footerText = "q/esc/ctrl+c: stop following • g/G: top/bottom • ctrl+l: clear"
+		footerText = "q/b/esc: back • g/G: top/bottom • ctrl+l: clear • ctrl+c: quit"
 	} else {
-		footerText = "↑/↓: scroll • g/G: top/bottom • ctrl+l: clear • q/esc: back"
+		footerText = "↑/↓: scroll • g/G: top/bottom • ctrl+l: clear • q/b/esc: back • ctrl+c: quit"
 	}
 	
 	scrollPos := ""

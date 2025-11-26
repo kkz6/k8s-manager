@@ -3,6 +3,7 @@ package components
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -12,6 +13,7 @@ import (
 type TableColumn struct {
 	Title string
 	Width int
+	Align string // "left", "right", "center"
 }
 
 // TableRow represents a row of data
@@ -32,12 +34,19 @@ type Table struct {
 
 // NewTable creates a new table
 func NewTable(title string, columns []TableColumn) *Table {
+	// Set default alignment if not specified
+	for i := range columns {
+		if columns[i].Align == "" {
+			columns[i].Align = "left"
+		}
+	}
+
 	return &Table{
 		Title:       title,
 		Columns:     columns,
 		Rows:        []TableRow{},
 		selected:    0,
-		showNumbers: true,
+		showNumbers: false, // Disabled by default for cleaner look
 		selectable:  true,
 		height:      20,
 		offset:      0,
@@ -115,19 +124,6 @@ func (t *Table) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if t.onSelect != nil && t.selected < len(t.Rows) {
 				return t, t.onSelect(t.Rows[t.selected])
 			}
-
-		// Number shortcuts
-		default:
-			if len(msg.String()) == 1 && msg.String() >= "1" && msg.String() <= "9" {
-				index := int(msg.String()[0] - '1')
-				if index < len(t.Rows) {
-					t.selected = index
-					t.ensureVisible()
-					if t.onSelect != nil {
-						return t, t.onSelect(t.Rows[t.selected])
-					}
-				}
-			}
 		}
 	}
 
@@ -140,42 +136,32 @@ func (t Table) View() string {
 
 	// Title
 	if t.Title != "" {
-		b.WriteString(TitleStyle.Render(t.Title))
+		titleStyle := lipgloss.NewStyle().
+			Bold(true).
+			Foreground(ColorPrimary).
+			Padding(0, 1)
+		b.WriteString(titleStyle.Render("📊 " + t.Title))
 		b.WriteString("\n\n")
 	}
 
 	// If no rows, show empty message
 	if len(t.Rows) == 0 {
-		b.WriteString(DescriptionStyle.Render("No items found"))
-		b.WriteString("\n\n")
-		b.WriteString(HelpStyle.Render("Press 'r' to refresh, 'q' to go back"))
-		return BoxStyle.Render(b.String())
+		emptyStyle := lipgloss.NewStyle().
+			Foreground(ColorMuted).
+			Italic(true).
+			Padding(2, 4)
+		b.WriteString(emptyStyle.Render("No items found"))
+		return b.String()
 	}
 
-	// Build header row
-	headers := []string{}
-	if t.showNumbers {
-		headers = append(headers, "#")
-	}
-	for _, col := range t.Columns {
-		headers = append(headers, col.Title)
-	}
-
-	// Calculate column widths
-	colWidths := []int{}
-	if t.showNumbers {
-		colWidths = append(colWidths, 4)
-	}
-	for _, col := range t.Columns {
-		colWidths = append(colWidths, col.Width)
-	}
+	// Calculate actual column widths needed
+	colWidths := t.calculateColumnWidths()
 
 	// Render header
-	headerLine := t.renderRow(headers, colWidths, HeaderStyle)
-	b.WriteString(headerLine)
+	b.WriteString(t.renderHeader(colWidths))
 	b.WriteString("\n")
 
-	// Separator
+	// Separator line
 	b.WriteString(t.renderSeparator(colWidths))
 	b.WriteString("\n")
 
@@ -183,29 +169,7 @@ func (t Table) View() string {
 	visibleRows := t.getVisibleRows()
 	for i, row := range visibleRows {
 		actualIndex := t.offset + i
-		
-		// Build row data
-		rowData := []string{}
-		if t.showNumbers {
-			rowData = append(rowData, fmt.Sprintf("%d", actualIndex+1))
-		}
-		for j, cell := range row {
-			if j < len(t.Columns) {
-				rowData = append(rowData, cell)
-			}
-		}
-
-		// Render row with selection
-		var rowLine string
-		if t.selectable && actualIndex == t.selected {
-			rowLine = SelectedStyle.Render("▸ ")
-			rowLine += t.renderRow(rowData, colWidths, SelectedStyle)
-		} else {
-			rowLine = "  "
-			rowLine += t.renderRow(rowData, colWidths, ItemStyle)
-		}
-
-		b.WriteString(rowLine)
+		b.WriteString(t.renderRow(row, colWidths, actualIndex))
 		if i < len(visibleRows)-1 {
 			b.WriteString("\n")
 		}
@@ -213,25 +177,147 @@ func (t Table) View() string {
 
 	// Scroll indicator
 	if len(t.Rows) > t.height {
-		b.WriteString("\n\n")
-		scrollInfo := fmt.Sprintf("Showing %d-%d of %d", 
-			t.offset+1, 
-			min(t.offset+t.height, len(t.Rows)), 
+		b.WriteString("\n")
+		scrollStyle := lipgloss.NewStyle().
+			Foreground(ColorMuted).
+			Italic(true).
+			Padding(1, 0)
+		scrollInfo := fmt.Sprintf("Rows %d-%d of %d",
+			t.offset+1,
+			min(t.offset+len(visibleRows), len(t.Rows)),
 			len(t.Rows))
-		b.WriteString(DescriptionStyle.Render(scrollInfo))
+		b.WriteString(scrollStyle.Render(scrollInfo))
 	}
 
-	// Help
-	b.WriteString("\n\n")
-	help := []string{
-		RenderKeyBinding("↑/k", "up"),
-		RenderKeyBinding("↓/j", "down"),
-		RenderKeyBinding("enter", "select"),
-		RenderKeyBinding("g/G", "top/bottom"),
-	}
-	b.WriteString(HelpStyle.Render(strings.Join(help, " • ")))
+	return b.String()
+}
 
-	return BoxStyle.Render(b.String())
+// calculateColumnWidths calculates the actual widths needed for each column
+func (t Table) calculateColumnWidths() []int {
+	widths := make([]int, len(t.Columns))
+
+	// Start with specified widths
+	for i, col := range t.Columns {
+		widths[i] = col.Width
+		// Make sure at least as wide as header
+		headerLen := utf8.RuneCountInString(col.Title)
+		if headerLen > widths[i] {
+			widths[i] = headerLen
+		}
+	}
+
+	// Check actual data widths (sample first 100 rows for performance)
+	sampleSize := min(100, len(t.Rows))
+	for _, row := range t.Rows[:sampleSize] {
+		for i, cell := range row {
+			if i < len(widths) {
+				cellLen := utf8.RuneCountInString(cell)
+				// Only increase if specified width is too small, but respect max width
+				if cellLen > widths[i] && widths[i] < t.Columns[i].Width {
+					widths[i] = min(cellLen, t.Columns[i].Width)
+				}
+			}
+		}
+	}
+
+	return widths
+}
+
+// renderHeader renders the table header
+func (t Table) renderHeader(widths []int) string {
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(ColorInfo).
+		Background(lipgloss.Color("235"))
+
+	var parts []string
+	for i, col := range t.Columns {
+		if i < len(widths) {
+			cellContent := t.alignText(col.Title, widths[i], col.Align)
+			parts = append(parts, headerStyle.Render(cellContent))
+		}
+	}
+
+	return "  " + strings.Join(parts, "  ")
+}
+
+// renderSeparator renders the separator line
+func (t Table) renderSeparator(widths []int) string {
+	sepStyle := lipgloss.NewStyle().
+		Foreground(ColorBorder)
+
+	var parts []string
+	for _, width := range widths {
+		parts = append(parts, strings.Repeat("─", width))
+	}
+
+	return sepStyle.Render("  " + strings.Join(parts, "──"))
+}
+
+// renderRow renders a single data row
+func (t Table) renderRow(row TableRow, widths []int, rowIndex int) string {
+	isSelected := t.selectable && rowIndex == t.selected
+
+	// Row style
+	var rowStyle lipgloss.Style
+	if isSelected {
+		rowStyle = lipgloss.NewStyle().
+			Foreground(ColorHighlight).
+			Background(lipgloss.Color("237")).
+			Bold(true)
+	} else {
+		rowStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252"))
+	}
+
+	// Selection indicator
+	indicator := "  "
+	if isSelected {
+		indicatorStyle := lipgloss.NewStyle().
+			Foreground(ColorPrimary).
+			Bold(true)
+		indicator = indicatorStyle.Render("▶ ")
+	}
+
+	// Render cells
+	var parts []string
+	for i, cell := range row {
+		if i < len(t.Columns) && i < len(widths) {
+			align := t.Columns[i].Align
+			cellContent := t.alignText(cell, widths[i], align)
+			parts = append(parts, rowStyle.Render(cellContent))
+		}
+	}
+
+	return indicator + strings.Join(parts, "  ")
+}
+
+// alignText aligns text within a given width
+func (t Table) alignText(text string, width int, align string) string {
+	// Truncate if too long
+	textLen := utf8.RuneCountInString(text)
+	if textLen > width {
+		if width > 3 {
+			// Convert to runes for proper truncation
+			runes := []rune(text)
+			return string(runes[:width-3]) + "..."
+		}
+		runes := []rune(text)
+		return string(runes[:width])
+	}
+
+	// Pad based on alignment
+	padding := width - textLen
+	switch align {
+	case "right":
+		return strings.Repeat(" ", padding) + text
+	case "center":
+		leftPad := padding / 2
+		rightPad := padding - leftPad
+		return strings.Repeat(" ", leftPad) + text + strings.Repeat(" ", rightPad)
+	default: // left
+		return text + strings.Repeat(" ", padding)
+	}
 }
 
 // ensureVisible ensures the selected row is visible
@@ -271,42 +357,4 @@ func min(a, b int) int {
 		return a
 	}
 	return b
-}
-
-// renderRow renders a row with proper column alignment
-func (t Table) renderRow(cells []string, widths []int, style lipgloss.Style) string {
-	var row strings.Builder
-	for i, cell := range cells {
-		if i < len(widths) {
-			cellStr := t.padOrTruncate(cell, widths[i])
-			row.WriteString(style.Width(widths[i]).Render(cellStr))
-			if i < len(cells)-1 {
-				row.WriteString(" ")
-			}
-		}
-	}
-	return row.String()
-}
-
-// renderSeparator renders the separator line
-func (t Table) renderSeparator(widths []int) string {
-	totalWidth := 0
-	for i, w := range widths {
-		totalWidth += w
-		if i < len(widths)-1 {
-			totalWidth += 1 // space between columns
-		}
-	}
-	return strings.Repeat("─", totalWidth)
-}
-
-// padOrTruncate pads or truncates a string to fit the given width
-func (t Table) padOrTruncate(s string, width int) string {
-	if len(s) > width {
-		if width > 3 {
-			return s[:width-3] + "..."
-		}
-		return s[:width]
-	}
-	return s
 }

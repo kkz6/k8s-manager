@@ -136,18 +136,79 @@ func RenderStatus(status string) string {
 }
 
 func RenderMessage(messageType, message string) string {
+	maxWidth := 80
+	wrappedMessage := wrapText(message, maxWidth)
+
 	switch messageType {
 	case "success":
-		return SuccessMessageStyle.Render("✓ " + message)
+		return SuccessMessageStyle.Width(maxWidth).Render("✓ " + wrappedMessage)
 	case "error":
-		return ErrorMessageStyle.Render("✗ " + message)
+		return ErrorMessageStyle.Width(maxWidth).Render("✗ " + wrappedMessage)
 	case "warning":
-		return WarningMessageStyle.Render("⚠ " + message)
+		return WarningMessageStyle.Width(maxWidth).Render("⚠ " + wrappedMessage)
 	case "info":
-		return InfoMessageStyle.Render("ℹ " + message)
+		return InfoMessageStyle.Width(maxWidth).Render("ℹ " + wrappedMessage)
 	default:
-		return ItemStyle.Render(message)
+		return ItemStyle.Width(maxWidth).Render(wrappedMessage)
 	}
+}
+
+// wrapText wraps text to a specified width
+func wrapText(text string, width int) string {
+	if len(text) <= width {
+		return text
+	}
+
+	var result string
+	var currentLine string
+	words := splitWords(text)
+
+	for _, word := range words {
+		if len(currentLine)+len(word)+1 > width {
+			if result != "" {
+				result += "\n"
+			}
+			result += currentLine
+			currentLine = word
+		} else {
+			if currentLine != "" {
+				currentLine += " "
+			}
+			currentLine += word
+		}
+	}
+
+	if currentLine != "" {
+		if result != "" {
+			result += "\n"
+		}
+		result += currentLine
+	}
+
+	return result
+}
+
+// splitWords splits text into words, preserving URLs and paths
+func splitWords(text string) []string {
+	var words []string
+	var currentWord string
+
+	for i, char := range text {
+		if char == ' ' || char == '\n' || char == '\t' {
+			if currentWord != "" {
+				words = append(words, currentWord)
+				currentWord = ""
+			}
+		} else {
+			currentWord += string(char)
+		}
+
+		if i == len(text)-1 && currentWord != "" {
+			words = append(words, currentWord)
+		}
+	}
+
+	return words
 }
 
 func RenderKeyBinding(key, description string) string {

@@ -1,9 +1,9 @@
 gcp:
-    project_id: zyoshu-test
-    region: us-central1
-    zone: ""
+    project_id: zyoshu
+    region: asia-northeast1
+    zone: "asia-northeast1-a"
 k8s:
-    cluster_name: gke_zyoshu-test_us-central1_laravel-cluster-stg
+    cluster_name: gke_zyoshu_asia-northeast1-a_laravel-cluster-stg
     namespace: laravel-app
 log_level: info
 ssh:

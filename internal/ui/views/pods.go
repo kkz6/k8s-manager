@@ -161,7 +161,7 @@ func (m *PodsViewModel) View() string {
 		return components.BoxStyle.Render(
 			components.RenderTitle("Pods", "") + "\n\n" +
 				components.RenderMessage("error", m.err.Error()) + "\n\n" +
-				components.HelpStyle.Render("Press 'r' to retry, 'q' to quit"),
+				components.HelpStyle.Render("Press 'r' to retry, 'q/b/esc' to go back, 'ctrl+c' to quit"),
 		)
 	}
 
