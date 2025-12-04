@@ -219,17 +219,17 @@ func (m *AppModel) navigate(nav NavigateMsg) (tea.Model, tea.Cmd) {
 
 	case ViewServices:
 		m.currentView = ViewServices
-		m.currentModel = NewComingSoonView("Services", "View and manage Kubernetes services")
+		m.currentModel = NewServicesViewModel()
 		return m, tea.Batch(clearCmd, m.currentModel.Init())
 
 	case ViewNamespaces:
 		m.currentView = ViewNamespaces
-		m.currentModel = NewComingSoonView("Namespaces", "Switch and manage Kubernetes namespaces")
+		m.currentModel = NewNamespacesViewModel()
 		return m, tea.Batch(clearCmd, m.currentModel.Init())
 
 	case ViewNodes:
 		m.currentView = ViewNodes
-		m.currentModel = NewComingSoonView("Nodes & Cluster", "View cluster nodes and resource usage")
+		m.currentModel = NewNodesViewModel()
 		return m, tea.Batch(clearCmd, m.currentModel.Init())
 
 	case ViewConfiguration:
@@ -382,8 +382,8 @@ func (m *MainMenuModelSimple) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "o":
 			return m, Navigate(ViewNodes, nil)
 		case "l":
-			// TODO: Implement logs/events view
-			return m, nil
+			// Go to pods view where users can select a pod for logs
+			return m, Navigate(ViewPods, nil)
 		case "x":
 			return m, Navigate(ViewSQLProxy, nil)
 		case "g":
@@ -415,8 +415,8 @@ func (m *MainMenuModelSimple) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "nodes":
 					return m, Navigate(ViewNodes, nil)
 				case "logs":
-					// TODO: Implement logs/events view from main menu
-					return m, nil
+					// Go to pods view where users can select a pod for logs
+					return m, Navigate(ViewPods, nil)
 				case "sql-proxy":
 					return m, Navigate(ViewSQLProxy, nil)
 				case "config":

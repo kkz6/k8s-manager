@@ -5,8 +5,11 @@ import (
 
 	"github.com/karthickk/k8s-manager/internal/commands"
 	"github.com/karthickk/k8s-manager/internal/commands/deployments"
+	"github.com/karthickk/k8s-manager/internal/commands/namespaces"
+	"github.com/karthickk/k8s-manager/internal/commands/nodes"
 	"github.com/karthickk/k8s-manager/internal/commands/pods"
 	"github.com/karthickk/k8s-manager/internal/commands/resources"
+	"github.com/karthickk/k8s-manager/internal/commands/services"
 	"github.com/karthickk/k8s-manager/internal/ui/views"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -31,10 +34,14 @@ func registerCommands() {
 	// Resource monitoring
 	commands.AddCommand(resources.NewResourcesCmd())
 
-	// TODO: Add more commands as they are implemented
-	// commands.AddCommand(secrets.NewSecretsCmd())
-	// commands.AddCommand(configmaps.NewConfigMapsCmd())
-	// commands.AddCommand(namespaces.NewNamespacesCmd())
+	// Services management
+	commands.AddCommand(services.NewServicesCmd())
+
+	// Namespace management
+	commands.AddCommand(namespaces.NewNamespacesCmd())
+
+	// Node management
+	commands.AddCommand(nodes.NewNodesCmd())
 
 	// Interactive mode command
 	commands.AddCommand(newInteractiveCmd())
