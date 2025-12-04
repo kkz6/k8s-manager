@@ -242,6 +242,11 @@ func (m *AppModel) navigate(nav NavigateMsg) (tea.Model, tea.Cmd) {
 		m.currentModel = NewSQLProxyViewModel()
 		return m, tea.Batch(clearCmd, m.currentModel.Init())
 
+	case ViewResourceManager:
+		m.currentView = ViewResourceManager
+		m.currentModel = NewResourceManagerModel(DefaultResourceManagerOptions())
+		return m, tea.Batch(clearCmd, m.currentModel.Init())
+
 	default:
 		return m, nil
 	}
@@ -270,6 +275,13 @@ func createMainMenu() tea.Model {
 			Description: "Manage Kubernetes deployments and rollouts",
 			Icon:        "🚀",
 			Shortcut:    "d",
+		},
+		{
+			ID:          "resources",
+			Title:       "Resource Manager",
+			Description: "Monitor CPU/Memory usage with real-time metrics",
+			Icon:        "📊",
+			Shortcut:    "r",
 		},
 		{
 			ID:          "services",
@@ -303,7 +315,7 @@ func createMainMenu() tea.Model {
 			ID:          "logs",
 			Title:       "Logs & Events",
 			Description: "View pod logs and cluster events",
-			Icon:        "📊",
+			Icon:        "📋",
 			Shortcut:    "l",
 		},
 		{
@@ -359,6 +371,8 @@ func (m *MainMenuModelSimple) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, Navigate(ViewPods, nil)
 		case "d":
 			return m, Navigate(ViewDeployments, nil)
+		case "r":
+			return m, Navigate(ViewResourceManager, nil)
 		case "c":
 			return m, Navigate(ViewConfigsMenu, nil)
 		case "s":
@@ -390,6 +404,8 @@ func (m *MainMenuModelSimple) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, Navigate(ViewPods, nil)
 				case "deployments":
 					return m, Navigate(ViewDeployments, nil)
+				case "resources":
+					return m, Navigate(ViewResourceManager, nil)
 				case "secrets":
 					return m, Navigate(ViewConfigsMenu, nil)
 				case "services":

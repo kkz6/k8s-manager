@@ -6,6 +6,7 @@ import (
 	"github.com/karthickk/k8s-manager/internal/commands"
 	"github.com/karthickk/k8s-manager/internal/commands/deployments"
 	"github.com/karthickk/k8s-manager/internal/commands/pods"
+	"github.com/karthickk/k8s-manager/internal/commands/resources"
 	"github.com/karthickk/k8s-manager/internal/ui/views"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -26,6 +27,9 @@ func registerCommands() {
 
 	// Deployment management
 	commands.AddCommand(deployments.NewDeploymentsCmd())
+
+	// Resource monitoring
+	commands.AddCommand(resources.NewResourcesCmd())
 
 	// TODO: Add more commands as they are implemented
 	// commands.AddCommand(secrets.NewSecretsCmd())
